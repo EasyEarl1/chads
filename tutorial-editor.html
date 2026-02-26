@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Edit Tutorial - ClickTut</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 10px;
+      padding: 30px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #667eea;
+      margin-bottom: 10px;
+    }
+    .tutorial-info {
+      background: #f9fafb;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+    }
+    .info-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .info-label {
+      font-size: 12px;
+      color: #666;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+    .info-value {
+      font-weight: 600;
+      color: #333;
+    }
+    .steps-container {
+      margin-top: 30px;
+    }
+    .step {
+      background: #f9fafb;
+      border-left: 4px solid #667eea;
+      padding: 25px;
+      margin-bottom: 25px;
+      border-radius: 8px;
+      position: relative;
+    }
+    .step-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    .step-number {
+      font-size: 24px;
+      font-weight: bold;
+      color: #667eea;
+    }
+    .step-actions {
+      display: flex;
+      gap: 10px;
+    }
+    .btn-small {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      background: #667eea;
+      color: white;
+    }
+    .btn-small:hover {
+      background: #5568d3;
+    }
+    .btn-small.danger {
+      background: #ef4444;
+    }
+    .btn-small.danger:hover {
+      background: #dc2626;
+    }
+    .step-content {
+      display: grid;
+      grid-template-columns: 1fr 1.5fr;
+      gap: 30px;
+      margin-top: 20px;
+    }
+    .step-left {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .section {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #667eea;
+      margin-bottom: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .instruction-editor {
+      min-height: 100px;
+    }
+    .instruction-textarea {
+      width: 100%;
+      min-height: 80px;
+      padding: 12px;
+      border: 2px solid #e5e7eb;
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: inherit;
+      resize: vertical;
+    }
+    .instruction-textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    .data-grid {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .data-label {
+      font-weight: 600;
+      color: #666;
+    }
+    .data-value {
+      color: #333;
+      word-break: break-word;
+    }
+    .data-value code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-family: 'Courier New', monospace;
+    }
+    .screenshot-container {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .screenshot {
+      max-width: 100%;
+      height: auto;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .no-screenshot {
+      color: #999;
+      padding: 40px;
+      text-align: center;
+    }
+    .btn {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      margin: 5px;
+    }
+    .btn:hover {
+      background: #5568d3;
+    }
+    .btn-success {
+      background: #10b981;
+    }
+    .btn-success:hover {
+      background: #059669;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    .error {
+      background: #fee;
+      color: #c33;
+      padding: 15px;
+      border-radius: 6px;
+      margin: 20px 0;
+    }
+    .controls {
+      margin: 20px 0;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    select, input {
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge.click { background: #dbeafe; color: #1e40af; }
+    .badge.input { background: #fef3c7; color: #92400e; }
+    .badge.submit { background: #d1fae5; color: #065f46; }
+    @media (max-width: 768px) {
+      .step-content {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>✏️ Edit Tutorial</h1>
+    
+    <div class="controls" style="margin: 20px 0;">
+      <input type="text" id="tutorialIdInput" placeholder="Enter tutorial ID">
+      <button class="btn" onclick="loadTutorial()">Load Tutorial</button>
+      <button class="btn" onclick="listTutorials()" style="background: #10b981;">List All</button>
+      <button class="btn" onclick="saveTutorial()" style="background: #10b981;" id="saveBtn" disabled>Save Changes</button>
+    </div>
+
+    <div id="content">
+      <div class="loading">Enter a tutorial ID and click "Load Tutorial"</div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://localhost:3000/api';
+    let currentTutorial = null;
+    let hasChanges = false;
+
+    // Auto-save indicator
+    window.addEventListener('beforeunload', (e) => {
+      if (hasChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+
+    async function loadTutorial() {
+      const tutorialId = document.getElementById('tutorialIdInput').value.trim();
+      if (!tutorialId) {
+        alert('Please enter a tutorial ID');
+        return;
+      }
+
+      const content = document.getElementById('content');
+      content.innerHTML = '<div class="loading">Loading...</div>';
+
+      try {
+        const response = await fetch(`${API_BASE}/tutorials/${tutorialId}`);
+        const data = await response.json();
+
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to load tutorial');
+        }
+
+        currentTutorial = data.tutorial;
+        hasChanges = false;
+        document.getElementById('saveBtn').disabled = true;
+        displayTutorial(data.tutorial);
+      } catch (error) {
+        content.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+      }
+    }
+
+    async function listTutorials() {
+      const content = document.getElementById('content');
+      content.innerHTML = '<div class="loading">Loading...</div>';
+
+      try {
+        const response = await fetch(`${API_BASE}/tutorials`);
+        const data = await response.json();
+
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to load tutorials');
+        }
+
+        displayTutorialList(data.tutorials);
+      } catch (error) {
+        content.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+      }
+    }
+
+    function displayTutorialList(tutorials) {
+      if (tutorials.length === 0) {
+        document.getElementById('content').innerHTML = '<div class="loading">No tutorials found</div>';
+        return;
+      }
+
+      let html = '<h2>All Tutorials</h2><div style="display: grid; gap: 15px; margin-top: 20px;">';
+      
+      tutorials.forEach(tut => {
+        html += `
+          <div class="step" onclick="loadTutorialById('${tut._id}')" style="cursor: pointer;">
+            <div class="step-header">
+              <div>
+                <strong>${tut.title}</strong>
+                <div style="font-size: 12px; color: #666; margin-top: 5px;">ID: ${tut._id}</div>
+              </div>
+              <div style="text-align: right;">
+                <div style="color: #667eea; font-weight: bold;">${tut.clickCount} steps</div>
+                <div style="font-size: 12px; color: #666;">${tut.status}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+      document.getElementById('content').innerHTML = html;
+    }
+
+    function loadTutorialById(id) {
+      document.getElementById('tutorialIdInput').value = id;
+      loadTutorial();
+    }
+
+    // Mask sensitive information (usernames, emails, tokens)
+    // BE VERY CONSERVATIVE - only mask actual sensitive data, not common words
+    function maskSensitiveData(text) {
+      if (!text || typeof text !== 'string') return text;
+      
+      let masked = text;
+      
+      // Mask email addresses
+      masked = masked.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[EMAIL]');
+      
+      // Mask API tokens (long alphanumeric strings, typically 20+ chars)
+      masked = masked.replace(/\b[A-Za-z0-9_-]{20,}\b/g, '[API_TOKEN]');
+      
+      // DO NOT mask usernames in general text - it's too aggressive and breaks instructions
+      // Only mask actual usernames when they appear in specific contexts (profile/account areas)
+      // For now, we'll skip username masking in general text to avoid false positives
+      
+      return masked;
+    }
+
+    function displayTutorial(tutorial) {
+      const content = document.getElementById('content');
+      
+      let html = `
+        <div class="tutorial-info">
+          <div class="info-item">
+            <span class="info-label">Title</span>
+            <span class="info-value">${tutorial.title}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Tutorial ID</span>
+            <span class="info-value" style="font-family: monospace; font-size: 12px;">${tutorial._id}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Status</span>
+            <span class="info-value">${tutorial.status}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Total Steps</span>
+            <span class="info-value">${tutorial.steps.length}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Created</span>
+            <span class="info-value">${new Date(tutorial.createdAt).toLocaleString()}</span>
+          </div>
+        </div>
+
+        <div class="steps-container">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h2>Steps (${tutorial.steps.length})</h2>
+            <button class="btn btn-success" onclick="generateInstructions('${tutorial._id}')">
+              ${tutorial.steps.some(s => s.instruction) ? '🔄 Regenerate Instructions' : '🤖 Generate Instructions'}
+            </button>
+          </div>
+      `;
+
+      tutorial.steps.forEach((step, index) => {
+        const clickData = step.clickData || {};
+        const element = clickData.element || {};
+        const page = clickData.page || {};
+        const coords = clickData.coordinates || {};
+        const stepNum = step.stepNumber || index + 1;
+        const actionType = element.actionType || 'click';
+        
+        html += `
+          <div class="step" data-step-index="${index}">
+            <div class="step-header">
+              <div>
+                <div class="step-number">Step ${stepNum}</div>
+                <span class="badge ${actionType}">${actionType}</span>
+              </div>
+              <div class="step-actions">
+                <button class="btn-small" onclick="deleteStep(${index})">Delete</button>
+              </div>
+            </div>
+            
+            <div class="step-content">
+              <div class="step-left">
+                <div class="section instruction-editor">
+                  <div class="section-title">📝 Instruction</div>
+                  <textarea 
+                    class="instruction-textarea" 
+                    id="instruction-${index}"
+                    onchange="markChanged()"
+                    placeholder="Enter instruction for this step...">${maskSensitiveData(step.instruction || '')}</textarea>
+                </div>
+                
+                <div class="section">
+                  <div class="section-title">🎯 Element Details</div>
+                  <div class="data-grid">
+                    <div class="data-label">Type:</div>
+                    <div class="data-value">&lt;${element.tag || 'unknown'}&gt;</div>
+                    
+                    ${element.text ? `
+                    <div class="data-label">Text:</div>
+                    <div class="data-value">"${maskSensitiveData(element.text)}"</div>
+                    ` : ''}
+                    
+                    ${element.id ? `
+                    <div class="data-label">ID:</div>
+                    <div class="data-value"><code>${element.id}</code></div>
+                    ` : ''}
+                    
+                    ${element.classes && element.classes.length > 0 ? `
+                    <div class="data-label">Classes:</div>
+                    <div class="data-value">${element.classes.map(c => `<code>${c}</code>`).join(', ')}</div>
+                    ` : ''}
+                    
+                    ${element.selector ? `
+                    <div class="data-label">Selector:</div>
+                    <div class="data-value"><code>${element.selector}</code></div>
+                    ` : ''}
+                    
+                    ${element.inputValue ? `
+                    <div class="data-label">Input Value:</div>
+                    <div class="data-value">"${maskSensitiveData(element.inputValue)}"</div>
+                    ` : ''}
+                    
+                    ${element.inputType ? `
+                    <div class="data-label">Input Type:</div>
+                    <div class="data-value">${element.inputType}</div>
+                    ` : ''}
+                    
+                    ${element.placeholder ? `
+                    <div class="data-label">Placeholder:</div>
+                    <div class="data-value">"${element.placeholder}"</div>
+                    ` : ''}
+                    
+                    ${element.label ? `
+                    <div class="data-label">Label:</div>
+                    <div class="data-value">"${maskSensitiveData(element.label)}"</div>
+                    ` : ''}
+                    
+                    ${element.attributes && Object.keys(element.attributes).length > 0 ? `
+                    <div class="data-label">Attributes:</div>
+                    <div class="data-value">
+                      ${Object.entries(element.attributes).map(([k, v]) => `<code>${k}="${maskSensitiveData(String(v))}"</code>`).join(', ')}
+                    </div>
+                    ` : ''}
+                  </div>
+                </div>
+                
+                <div class="section">
+                  <div class="section-title">📍 Click Location</div>
+                  <div class="data-grid">
+                    <div class="data-label">X:</div>
+                    <div class="data-value">${coords.x || 'N/A'}</div>
+                    <div class="data-label">Y:</div>
+                    <div class="data-value">${coords.y || 'N/A'}</div>
+                    ${coords.x && coords.y && page.viewport ? `
+                    <div class="data-label">Position:</div>
+                    <div class="data-value">
+                      ${((coords.x / page.viewport.width) * 100).toFixed(1)}% from left,
+                      ${((coords.y / page.viewport.height) * 100).toFixed(1)}% from top
+                    </div>
+                    ` : ''}
+                  </div>
+                </div>
+                
+                <div class="section">
+                  <div class="section-title">🌐 Page Context</div>
+                  <div class="data-grid">
+                    <div class="data-label">Title:</div>
+                    <div class="data-value">${page.title || 'Unknown'}</div>
+                    <div class="data-label">URL:</div>
+                    <div class="data-value" style="word-break: break-all;">
+                      <a href="${page.url || '#'}" target="_blank">${page.url || 'N/A'}</a>
+                    </div>
+                    ${page.viewport ? `
+                    <div class="data-label">Viewport:</div>
+                    <div class="data-value">${page.viewport.width}x${page.viewport.height}</div>
+                    ` : ''}
+                    <div class="data-label">Timestamp:</div>
+                    <div class="data-value">${new Date(step.timestamp).toLocaleString()}</div>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="screenshot-container">
+                ${step.screenshot ? 
+                  `<img src="http://localhost:3000/api/tutorials/${tutorial._id}/screenshots/${stepNum}" 
+                        class="screenshot" 
+                        alt="Step ${stepNum} screenshot" 
+                        onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'no-screenshot\\'>Screenshot not available</div>';">
+                   ` :
+                  '<div class="no-screenshot">No screenshot available</div>'
+                }
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+
+      content.innerHTML = html;
+    }
+
+    function markChanged() {
+      hasChanges = true;
+      document.getElementById('saveBtn').disabled = false;
+    }
+
+    async function saveTutorial() {
+      if (!currentTutorial) {
+        alert('No tutorial loaded');
+        return;
+      }
+
+      // Collect all instruction changes
+      const steps = currentTutorial.steps.map((step, index) => {
+        const textarea = document.getElementById(`instruction-${index}`);
+        if (textarea) {
+          step.instruction = textarea.value.trim();
+        }
+        return step;
+      });
+
+      currentTutorial.steps = steps;
+
+      try {
+        // Update via API (we'll need to add an update endpoint)
+        const response = await fetch(`${API_BASE}/tutorials/${currentTutorial._id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(currentTutorial)
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to save tutorial');
+        }
+
+        hasChanges = false;
+        document.getElementById('saveBtn').disabled = true;
+        alert('✅ Tutorial saved successfully!');
+      } catch (error) {
+        alert('Error saving: ' + error.message);
+      }
+    }
+
+    async function deleteStep(stepIndex) {
+      if (!confirm(`Delete step ${stepIndex + 1}?`)) return;
+      
+      currentTutorial.steps.splice(stepIndex, 1);
+      // Renumber steps
+      currentTutorial.steps.forEach((step, idx) => {
+        step.stepNumber = idx + 1;
+      });
+      
+      markChanged();
+      displayTutorial(currentTutorial);
+    }
+
+    async function generateInstructions(tutorialId) {
+      if (!confirm('Generate AI instructions for this tutorial?')) {
+        return;
+      }
+
+      const content = document.getElementById('content');
+      const originalContent = content.innerHTML;
+      content.innerHTML = '<div class="loading">🤖 Generating AI instructions... This may take a moment.</div>';
+
+      try {
+        const response = await fetch(`${API_BASE}/tutorials/${tutorialId}/generate-instructions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ regenerate: true })
+        });
+
+        const data = await response.json();
+        
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to generate instructions');
+        }
+
+        alert('✅ Instructions generated successfully!');
+        loadTutorial(); // Reload to see updated instructions
+      } catch (error) {
+        content.innerHTML = originalContent;
+        alert('Error: ' + error.message);
+      }
+    }
+
+    // Auto-load if tutorial ID is in URL
+    window.onload = () => {
+      const params = new URLSearchParams(window.location.search);
+      const id = params.get('id');
+      if (id) {
+        document.getElementById('tutorialIdInput').value = id;
+        loadTutorial();
+      } else {
+        listTutorials();
+      }
+    };
+  </script>
+</body>
+</html>
+
