@@ -238,11 +238,14 @@
     };
   }
 
-  // Capture input/typing data
+  // Capture input/typing data with enhanced context
   async function captureInputData(event, target, originalTimestamp = null) {
     // Use the original timestamp from when input started (before debounce)
     // This ensures input events are ordered correctly relative to clicks
-    const timestamp = originalTimestamp || Date.now();
+    // Use event timestamp for more accurate ordering (same as clicks)
+    const eventTimestamp = event.timeStamp || 0;
+    const pageLoadTime = performance.timing.navigationStart || Date.now() - performance.now();
+    const timestamp = originalTimestamp || (pageLoadTime + eventTimestamp);
     
     // Get input value (but don't capture sensitive data like passwords)
     const inputType = target.type || '';
