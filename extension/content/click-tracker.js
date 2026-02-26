@@ -490,6 +490,130 @@
     return context;
   }
 
+  // Get surrounding context (parent, siblings, nearby elements)
+  function getSurroundingContext(element) {
+    const context = {
+      parent: null,
+      siblings: [],
+      nearbyElements: [],
+      container: null
+    };
+
+    // Get parent element info
+    if (element.parentElement) {
+      const parent = element.parentElement;
+      context.parent = {
+        tag: parent.tagName.toLowerCase(),
+        id: parent.id || null,
+        classes: Array.from(parent.classList || []).slice(0, 5), // Limit classes
+        text: (parent.textContent || '').trim().substring(0, 100)
+      };
+    }
+
+    // Get container (form, section, nav, etc.)
+    let container = element.parentElement;
+    let depth = 0;
+    while (container && depth < 5 && container !== document.body) {
+      const tag = container.tagName.toLowerCase();
+      if (['form', 'section', 'nav', 'header', 'footer', 'main', 'article', 'aside', 'div'].includes(tag)) {
+        context.container = {
+          tag: tag,
+          id: container.id || null,
+          classes: Array.from(container.classList || []).slice(0, 3),
+          role: container.getAttribute('role') || null
+        };
+        break;
+      }
+      container = container.parentElement;
+      depth++;
+    }
+
+    // Get sibling elements (previous and next)
+    if (element.parentElement) {
+      const siblings = Array.from(element.parentElement.children);
+      const index = siblings.indexOf(element);
+      if (index > 0) {
+        const prevSibling = siblings[index - 1];
+        context.siblings.push({
+          tag: prevSibling.tagName.toLowerCase(),
+          text: (prevSibling.textContent || '').trim().substring(0, 50),
+          classes: Array.from(prevSibling.classList || []).slice(0, 3)
+        });
+      }
+      if (index < siblings.length - 1) {
+        const nextSibling = siblings[index + 1];
+        context.siblings.push({
+          tag: nextSibling.tagName.toLowerCase(),
+          text: (nextSibling.textContent || '').trim().substring(0, 50),
+          classes: Array.from(nextSibling.classList || []).slice(0, 3)
+        });
+      }
+    }
+
+    return context;
+  }
+
+  // Get data attributes
+  function getDataAttributes(element) {
+    const dataAttrs = {};
+    Array.from(element.attributes || []).forEach(attr => {
+      if (attr.name.startsWith('data-')) {
+        dataAttrs[attr.name] = attr.value.substring(0, 100);
+      }
+    });
+    return Object.keys(dataAttrs).length > 0 ? dataAttrs : null;
+  }
+
+  // Get relevant computed styles
+  function getRelevantStyles(element) {
+    try {
+      const styles = window.getComputedStyle(element);
+      return {
+        display: styles.display,
+        visibility: styles.visibility,
+        position: styles.position,
+        zIndex: styles.zIndex,
+        cursor: styles.cursor,
+        backgroundColor: styles.backgroundColor !== 'rgba(0, 0, 0, 0)' ? styles.backgroundColor : null,
+        color: styles.color,
+        fontSize: styles.fontSize,
+        fontWeight: styles.fontWeight
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Check if element is visible
+  function isElementVisible(element) {
+    try {
+      const rect = element.getBoundingClientRect();
+      const styles = window.getComputedStyle(element);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        styles.display !== 'none' &&
+        styles.visibility !== 'hidden' &&
+        styles.opacity !== '0'
+      );
+    } catch (e) {
+      return true; // Assume visible if we can't check
+    }
+  }
+
+  // Check if element is interactive
+  function isElementInteractive(element) {
+    const interactiveTags = ['a', 'button', 'input', 'select', 'textarea', 'label'];
+    const tag = element.tagName.toLowerCase();
+    return (
+      interactiveTags.includes(tag) ||
+      element.hasAttribute('onclick') ||
+      element.hasAttribute('role') && ['button', 'link', 'tab'].includes(element.getAttribute('role')) ||
+      element.style.cursor === 'pointer' ||
+      element.getAttribute('tabindex') !== null
+    );
+  }
+
   // Get relevant attributes
   function getRelevantAttributes(element) {
     const relevant = ['href', 'src', 'alt', 'aria-label', 'data-testid', 'name', 'type', 'value', 'placeholder', 'role', 'aria-describedby', 'title'];

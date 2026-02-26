@@ -325,14 +325,23 @@ router.post('/:id/generate-instructions', async (req, res) => {
     });
 
     // Sort steps by timestamp to ensure correct chronological order
-    // This fixes issues where debounced input events might be recorded after button clicks
+    // Use timestamp from clickData first, then step timestamp, with fallback
     const sortedSteps = tutorial.steps.map((step, index) => ({
       ...step,
       _originalIndex: index, // Preserve original index
       _sortedIndex: -1 // Will be set after sorting
     })).sort((a, b) => {
-      const timestampA = a.timestamp || a.clickData?.timestamp || 0;
-      const timestampB = b.timestamp || b.clickData?.timestamp || 0;
+      // Prioritize clickData.timestamp (most accurate), then step.timestamp
+      const timestampA = a.clickData?.timestamp || a.timestamp || 0;
+      const timestampB = b.clickData?.timestamp || b.timestamp || 0;
+      
+      // If timestamps are equal (or very close), use stepNumber as tiebreaker
+      if (Math.abs(timestampA - timestampB) < 100) { // Within 100ms, consider same time
+        const stepNumA = a.stepNumber || 0;
+        const stepNumB = b.stepNumber || 0;
+        return stepNumA - stepNumB;
+      }
+      
       return timestampA - timestampB;
     });
 

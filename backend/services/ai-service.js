@@ -154,7 +154,11 @@ class AIService {
           x: coordinates.x,
           y: coordinates.y,
           pageX: coordinates.pageX,
-          pageY: coordinates.pageY
+          pageY: coordinates.pageY,
+          elementX: coordinates.elementX,
+          elementY: coordinates.elementY,
+          elementPercentX: coordinates.elementPercentX,
+          elementPercentY: coordinates.elementPercentY
         },
         hasScreenshot: !!step.screenshot,
         timestamp: step.timestamp
@@ -348,6 +352,78 @@ ${stepsContext.map((ctx, idx) => {
       }
     } catch (error) {
       // Ignore attribute parsing errors
+    }
+  }
+
+  // Additional context data points
+  if (element.ariaLabel) {
+    stepInfo += `   Aria Label: "${element.ariaLabel}"\n`;
+  }
+  if (element.ariaRole) {
+    stepInfo += `   Aria Role: "${element.ariaRole}"\n`;
+  }
+  if (element.title) {
+    stepInfo += `   Title Attribute: "${element.title}"\n`;
+  }
+  if (element.dataAttributes && Object.keys(element.dataAttributes).length > 0) {
+    const dataAttrs = Object.entries(element.dataAttributes)
+      .map(([k, v]) => `${k}="${String(v).substring(0, 50)}"`)
+      .join(', ');
+    stepInfo += `   Data Attributes: ${dataAttrs}\n`;
+  }
+  if (element.dimensions) {
+    stepInfo += `   Element Size: ${element.dimensions.width}x${element.dimensions.height}px\n`;
+    stepInfo += `   Element Position: (${element.dimensions.left}, ${element.dimensions.top})\n`;
+  }
+  if (element.computedStyles) {
+    const styles = element.computedStyles;
+    if (styles.display) stepInfo += `   Display: ${styles.display}\n`;
+    if (styles.position) stepInfo += `   Position: ${styles.position}\n`;
+    if (styles.cursor) stepInfo += `   Cursor: ${styles.cursor}\n`;
+  }
+  if (element.isVisible !== undefined) {
+    stepInfo += `   Visible: ${element.isVisible}\n`;
+  }
+  if (element.isInteractive !== undefined) {
+    stepInfo += `   Interactive: ${element.isInteractive}\n`;
+  }
+  
+  // Surrounding context
+  if (element.surroundingContext) {
+    const surround = element.surroundingContext;
+    if (surround.parent) {
+      stepInfo += `\n   📦 PARENT ELEMENT:\n`;
+      stepInfo += `      Tag: <${surround.parent.tag}>\n`;
+      if (surround.parent.id) stepInfo += `      ID: ${surround.parent.id}\n`;
+      if (surround.parent.classes && surround.parent.classes.length > 0) {
+        stepInfo += `      Classes: ${surround.parent.classes.join(', ')}\n`;
+      }
+      if (surround.parent.text) {
+        stepInfo += `      Text: "${surround.parent.text}"\n`;
+      }
+    }
+    if (surround.container) {
+      stepInfo += `\n   📦 CONTAINER:\n`;
+      stepInfo += `      Tag: <${surround.container.tag}>\n`;
+      if (surround.container.id) stepInfo += `      ID: ${surround.container.id}\n`;
+      if (surround.container.role) stepInfo += `      Role: ${surround.container.role}\n`;
+    }
+    if (surround.siblings && surround.siblings.length > 0) {
+      stepInfo += `\n   🔗 SIBLING ELEMENTS:\n`;
+      surround.siblings.forEach((sib, idx) => {
+        stepInfo += `      ${idx === 0 ? 'Previous' : 'Next'}: <${sib.tag}>`;
+        if (sib.text) stepInfo += ` "${sib.text}"`;
+        stepInfo += `\n`;
+      });
+    }
+  }
+  
+  // Enhanced click coordinates
+  if (click.elementX !== undefined && click.elementY !== undefined) {
+    stepInfo += `\n   📍 CLICK WITHIN ELEMENT:\n`;
+    stepInfo += `      Position: (${click.elementX}, ${click.elementY})px from element top-left\n`;
+    if (click.elementPercentX && click.elementPercentY) {
+      stepInfo += `      Position: ${click.elementPercentX}% from left, ${click.elementPercentY}% from top of element\n`;
     }
   }
   
