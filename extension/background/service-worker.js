@@ -246,30 +246,94 @@ async function handleRecordClick(clickData, sendResponse) {
   }
 }
 
-// Capture screenshot of current tab
-async function handleCaptureScreenshot(tabId, sendResponse) {
+// Screenshot: throttle + retry queue (Strategy B). Chrome allows ~2 captureVisibleTab/sec.
+const MIN_SCREENSHOT_INTERVAL_MS = 550;
+const SCREENSHOT_RETRY_DELAY_MS = 200;
+const SCREENSHOT_MAX_RETRIES = 3;
+const TAB_COMPLETE_RETRY_MS = 100;
+let lastScreenshotTime = 0;
+
+function getWindowIdForTab(tabId) {
+  return new Promise((resolve) => {
+    chrome.tabs.get(tabId, (tab) => {
+      resolve(tab && tab.windowId != null ? tab.windowId : null);
+    });
+  });
+}
+
+function waitForTabComplete(tabId, maxWaitMs = 500) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    function check() {
+      chrome.tabs.get(tabId, (tab) => {
+        if (tab && tab.status === 'complete') {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - start >= maxWaitMs) {
+          resolve(false);
+          return;
+        }
+        setTimeout(check, TAB_COMPLETE_RETRY_MS);
+      });
+    }
+    check();
+  });
+}
+
+function doCapture(tabId, windowId) {
+  return new Promise((resolve, reject) => {
+    const wId = windowId != null ? windowId : null;
+    chrome.tabs.captureVisibleTab(wId, { format: 'png', quality: 90 }, (dataUrl) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else if (!dataUrl) {
+        reject(new Error('capture_returned_null'));
+      } else {
+        resolve(dataUrl);
+      }
+    });
+  });
+}
+
+async function tryCapture(tabId, sendResponse, retryCount = 0) {
   try {
     if (!tabId) {
-      // Get active tab
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tabs.length === 0) {
-        sendResponse({ screenshot: null });
+        sendResponse({ screenshot: null, reason: 'no_active_tab' });
         return;
       }
       tabId = tabs[0].id;
     }
 
-    // Capture visible tab
-    const dataUrl = await chrome.tabs.captureVisibleTab(null, {
-      format: 'png',
-      quality: 90
-    });
+    const now = Date.now();
+    const elapsed = now - lastScreenshotTime;
+    if (elapsed < MIN_SCREENSHOT_INTERVAL_MS) {
+      await new Promise(r => setTimeout(r, MIN_SCREENSHOT_INTERVAL_MS - elapsed));
+    }
 
+    const windowId = await getWindowIdForTab(tabId);
+    await waitForTabComplete(tabId);
+
+    const dataUrl = await doCapture(tabId, windowId);
+    lastScreenshotTime = Date.now();
     sendResponse({ screenshot: dataUrl });
   } catch (error) {
-    console.error('ClickTut: Error capturing screenshot', error);
-    sendResponse({ screenshot: null });
+    const msg = error && error.message ? error.message : String(error);
+    const isRetryable = /rate limit|429|MAX_CAPTURE|per second|busy|capture_returned_null/i.test(msg);
+    if (isRetryable && retryCount < SCREENSHOT_MAX_RETRIES) {
+      console.warn(`ClickTut: Screenshot failed, retrying in ${SCREENSHOT_RETRY_DELAY_MS}ms (${retryCount + 1}/${SCREENSHOT_MAX_RETRIES}):`, msg);
+      setTimeout(() => tryCapture(tabId, sendResponse, retryCount + 1), SCREENSHOT_RETRY_DELAY_MS);
+    } else {
+      console.error('ClickTut: Screenshot failed:', msg);
+      sendResponse({ screenshot: null, reason: isRetryable ? 'rate_limit' : 'error', error: msg });
+    }
   }
+}
+
+async function handleCaptureScreenshot(tabId, sendResponse) {
+  tryCapture(tabId, sendResponse, 0);
 }
 
 // Handle extension installation

@@ -138,6 +138,8 @@ router.post('/:id/click', async (req, res) => {
     let screenshotPath = null;
     if (clickData.screenshot) {
       screenshotPath = await saveScreenshot(id, stepNumber, clickData.screenshot);
+    } else {
+      console.warn(`ClickTut backend: Step ${stepNumber} recorded without screenshot (extension may have hit rate limit or permission)`);
     }
     
     const step = {

@@ -42,7 +42,15 @@
     return true; // Keep channel open for async response
   });
 
-  // Track click events
+  // Pre-click capture: start screenshot on mousedown so we get the UI before menu/navigation (Google Drive, etc.)
+  let pendingClickScreenshotPromise = null;
+  document.addEventListener('mousedown', () => {
+    if (isRecording) {
+      pendingClickScreenshotPromise = requestScreenshot();
+    }
+  }, true);
+
+  // Track click events (use pre-captured screenshot from mousedown when available)
   document.addEventListener('click', async (event) => {
     if (!isRecording) {
       console.log('ClickTut: Click detected but not recording');
@@ -51,7 +59,7 @@
 
     try {
       console.log('ClickTut: Capturing click...');
-      const clickData = await captureClickData(event, 'click');
+      const clickData = await captureClickData(event, 'click', { usePreClickScreenshot: true });
       console.log('ClickTut: Click captured, sending to background...', clickData);
       
       // Send to background script for processing (background will assign step number)
@@ -143,7 +151,8 @@
   }, true);
 
   // Capture comprehensive click data with extensive context
-  async function captureClickData(event, actionType = 'click') {
+  // usePreClickScreenshot: for 'click', use screenshot started on mousedown (captures before menu disappears)
+  async function captureClickData(event, actionType = 'click', options = {}) {
     const target = event.target;
     // Use event timestamp for more accurate ordering (milliseconds since page load)
     // Convert to absolute timestamp by adding to page load time
@@ -229,8 +238,18 @@
       hash: window.location.hash
     };
 
-    // Request screenshot from background script
-    const screenshot = await requestScreenshot();
+    // Screenshot: for click, use pre-capture from mousedown (wait up to 500ms); else request now
+    let screenshot = null;
+    if (actionType === 'click' && options.usePreClickScreenshot && pendingClickScreenshotPromise) {
+      screenshot = await Promise.race([
+        pendingClickScreenshotPromise,
+        new Promise(r => setTimeout(() => r(null), 500))
+      ]);
+      pendingClickScreenshotPromise = null;
+    }
+    if (screenshot === null) {
+      screenshot = await requestScreenshot();
+    }
 
     return {
       timestamp,
@@ -709,17 +728,21 @@
     return attrs;
   }
 
-  // Request screenshot from background script
+  // Request screenshot from background script (Chrome allows ~2/sec; background throttles)
   function requestScreenshot() {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage(
         { action: 'captureScreenshot' },
         (response) => {
           if (chrome.runtime.lastError) {
-            console.error('ClickTut: Screenshot error', chrome.runtime.lastError);
+            console.warn('ClickTut: Screenshot not available –', chrome.runtime.lastError.message);
+            resolve(null);
+          } else if (!response?.screenshot) {
+            const reason = response?.reason || 'unknown';
+            console.warn('ClickTut: Screenshot not available for this step (reason:', reason, response?.error ? '- ' + response.error : '', ')');
             resolve(null);
           } else {
-            resolve(response?.screenshot || null);
+            resolve(response.screenshot);
           }
         }
       );
