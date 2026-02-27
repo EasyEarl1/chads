@@ -251,16 +251,38 @@ router.get('/', async (req, res) => {
 });
 
 // Sort steps by timestamp so display order is chronological (fixes input-after-submit)
+// When an input (typing) step and a click (focus) step target the same field and are close in time,
+// put the click first so "Click the field" appears before "Type in the field".
+function sameInputField(stepA, stepB) {
+  const elA = stepA.clickData?.element;
+  const elB = stepB.clickData?.element;
+  const pageA = stepA.clickData?.page?.url || '';
+  const pageB = stepB.clickData?.page?.url || '';
+  if (pageA !== pageB) return false;
+  const tagA = (elA?.tag || '').toLowerCase();
+  const tagB = (elB?.tag || '').toLowerCase();
+  const isInputTag = (t) => t === 'input' || t === 'textarea';
+  if (!isInputTag(tagA) || !isInputTag(tagB)) return false;
+  const idA = elA?.id ?? elA?.selector ?? '';
+  const idB = elB?.id ?? elB?.selector ?? '';
+  return idA && idB && (idA === idB || (elA?.selector && elB?.selector && elA.selector === elB.selector));
+}
+
 function sortStepsByTimestamp(steps) {
   if (!steps || steps.length === 0) return steps;
-  const actionOrder = { input: 0, click: 1, submit: 2 }; // tie-breaker: input before submit
+  const actionOrder = { input: 0, click: 1, submit: 2 }; // tie-breaker for very close timestamps
   return [...steps].sort((a, b) => {
     const tsA = a.timestamp || 0;
     const tsB = b.timestamp || 0;
+    const typeA = (a.clickData?.element?.actionType || a.clickData?.actionType) || 'click';
+    const typeB = (b.clickData?.element?.actionType || b.clickData?.actionType) || 'click';
     if (Math.abs(tsA - tsB) < 100) {
-      const typeA = (a.clickData?.element?.actionType || a.clickData?.actionType) || 'click';
-      const typeB = (b.clickData?.element?.actionType || b.clickData?.actionType) || 'click';
       return (actionOrder[typeA] ?? 1) - (actionOrder[typeB] ?? 1);
+    }
+    // Same field: "click to focus" must always come before "type in field"
+    if (sameInputField(a, b)) {
+      if (typeA === 'click' && typeB === 'input') return -1;
+      if (typeA === 'input' && typeB === 'click') return 1;
     }
     return tsA - tsB;
   });
