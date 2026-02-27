@@ -50,6 +50,16 @@
     }
   }, true);
 
+  // Prefer interactive target: if user clicked text inside a button, record the button (reduces "random box" noise)
+  function getInteractiveTarget(element, maxLevels = 3) {
+    let el = element;
+    for (let i = 0; i < maxLevels && el && el !== document.body; i++) {
+      if (isElementInteractive(el)) return el;
+      el = el.parentElement;
+    }
+    return element;
+  }
+
   // Track click events (use pre-captured screenshot from mousedown when available)
   document.addEventListener('click', async (event) => {
     if (!isRecording) {
@@ -58,8 +68,9 @@
     }
 
     try {
+      const targetOverride = getInteractiveTarget(event.target);
       console.log('ClickTut: Capturing click...');
-      const clickData = await captureClickData(event, 'click', { usePreClickScreenshot: true });
+      const clickData = await captureClickData(event, 'click', { usePreClickScreenshot: true, targetOverride });
       console.log('ClickTut: Click captured, sending to background...', clickData);
       
       // Send to background script for processing (background will assign step number)
@@ -152,8 +163,9 @@
 
   // Capture comprehensive click data with extensive context
   // usePreClickScreenshot: for 'click', use screenshot started on mousedown (captures before menu disappears)
+  // targetOverride: if set, use this element for dimensions/label (e.g. interactive parent) instead of event.target
   async function captureClickData(event, actionType = 'click', options = {}) {
-    const target = event.target;
+    const target = options.targetOverride || event.target;
     // Use event timestamp for more accurate ordering (milliseconds since page load)
     // Convert to absolute timestamp by adding to page load time
     const eventTimestamp = event.timeStamp || 0;
@@ -696,14 +708,20 @@
     }
   }
 
-  // Check if element is interactive
+  // Check if element is interactive (so we record it and show highlight on publish)
   function isElementInteractive(element) {
     const interactiveTags = ['a', 'button', 'input', 'select', 'textarea', 'label'];
     const tag = element.tagName.toLowerCase();
+    const role = element.getAttribute('role');
+    const roles = ['button', 'link', 'tab', 'menuitem', 'option', 'switch'];
+    try {
+      const cursor = window.getComputedStyle(element).cursor;
+      if (cursor === 'pointer') return true;
+    } catch (_) {}
     return (
       interactiveTags.includes(tag) ||
       element.hasAttribute('onclick') ||
-      element.hasAttribute('role') && ['button', 'link', 'tab'].includes(element.getAttribute('role')) ||
+      (role && roles.includes(role)) ||
       element.style.cursor === 'pointer' ||
       element.getAttribute('tabindex') !== null
     );

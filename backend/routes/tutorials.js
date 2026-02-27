@@ -540,6 +540,207 @@ async function saveScreenshot(tutorialId, stepNumber, base64Data) {
   }
 }
 
+// Publish tutorial as Brevo-style help article (HTML page)
+router.post('/:id/publish', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = await loadTutorials();
+    tutorials = data.tutorials || [];
+    const tutorial = tutorials.find(t => t._id === id);
+    if (!tutorial) {
+      return res.status(404).json({ success: false, error: 'Tutorial not found' });
+    }
+    const steps = sortStepsByTimestamp(tutorial.steps || []);
+    if (steps.length === 0) {
+      return res.status(400).json({ success: false, error: 'Tutorial has no steps' });
+    }
+
+    const aiService = require('../services/ai-service');
+    const narrative = await aiService.generatePublishNarrative(tutorial);
+
+    const baseUrl = req.protocol + '://' + req.get('host');
+    const apiBase = baseUrl + '/api/tutorials/' + encodeURIComponent(id);
+
+    const tocItems = steps.map((s, i) => ({
+      num: i + 1,
+      text: (s.instruction || `Step ${i + 1}`).replace(/<[^>]+>/g, '').substring(0, 80)
+    }));
+
+    // Don't show red box for landing steps, non-interactive clicks, or huge containers ("recorder noise")
+    const isLandingInstruction = (text) => /^(Start on|Ensure you'?re on|Open the|Open your|Navigate to the)/i.test((text || '').trim());
+
+    const stepSections = steps.map((step, index) => {
+      const stepNum = step.stepNumber || index + 1;
+      const rawInstruction = step.instruction || `Step ${stepNum}`;
+      const instruction = rawInstruction.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const page = step.clickData?.page || {};
+      const coords = step.clickData?.coordinates || {};
+      const element = step.clickData?.element || {};
+      const dims = element.dimensions || null;
+      const viewport = page.viewport || { width: 1, height: 1 };
+
+      let boxLeft = 10;
+      let boxTop = 10;
+      let boxW = 14;
+      let boxH = 8;
+      let showHighlight = true;
+
+      // Step 1 with "Start on..." / "Open the..." = landing step; no highlight
+      if (index === 0 && isLandingInstruction(rawInstruction)) {
+        showHighlight = false;
+      }
+      // Non-interactive only: suppress highlight only for step 1 (avoid noise). For other steps,
+      // show highlight when we have dimensions so clicks like "user icon" (div/svg) still get a box.
+      else if (element.isInteractive === false && index === 0) {
+        showHighlight = false;
+      }
+      if (dims && viewport.width && viewport.height) {
+        const leftPct = (dims.left / viewport.width) * 100;
+        const topPct = (dims.top / viewport.height) * 100;
+        const widthPct = (dims.width / viewport.width) * 100;
+        const heightPct = (dims.height / viewport.height) * 100;
+
+        const padPx = 8;
+        const padXPct = (padPx / viewport.width) * 100;
+        const padYPct = (padPx / viewport.height) * 100;
+
+        boxLeft = Math.max(0, leftPct - padXPct);
+        boxTop = Math.max(0, topPct - padYPct);
+        boxW = Math.min(100 - boxLeft, widthPct + padXPct * 2);
+        boxH = Math.min(100 - boxTop, heightPct + padYPct * 2);
+
+        // Huge box = likely a container; don't highlight (avoids "random large box" on step 9)
+        if (boxW > 55 || boxH > 55) {
+          showHighlight = false;
+        }
+      } else {
+        const x = coords.x != null ? coords.x : 0;
+        const y = coords.y != null ? coords.y : 0;
+        const leftPct = viewport.width ? (x / viewport.width) * 100 : 0;
+        const topPct = viewport.height ? (y / viewport.height) * 100 : 0;
+        boxW = 14;
+        boxH = 8;
+        boxLeft = Math.max(0, Math.min(100 - boxW, leftPct - boxW / 2));
+        boxTop = Math.max(0, Math.min(100 - boxH, topPct - boxH / 2));
+      }
+
+      const screenshotUrl = step.screenshot ? `${apiBase}/screenshots/${stepNum}` : '';
+      const pageTitle = page.title ? `<p class="step-page-title">${String(page.title).replace(/<[^>]+>/g, '')}</p>` : '';
+      const highlightHtml = showHighlight
+        ? `<div class="highlight-box" style="left:${boxLeft}%;top:${boxTop}%;width:${boxW}%;height:${boxH}%;"></div>`
+        : '';
+
+      return `
+        <section class="step-section" id="step-${index + 1}">
+          <h2 class="step-heading"><span class="step-badge">${index + 1}</span> ${instruction}</h2>
+          ${pageTitle}
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              ${step.screenshot ? `
+                <img src="${screenshotUrl}" alt="Step ${index + 1}" class="step-screenshot" loading="lazy" />
+                ${highlightHtml}
+              ` : '<div class="no-screenshot">Screenshot not available</div>'}
+            </div>
+          </div>
+        </section>`;
+    }).join('\n');
+
+    const prereqsHtml = narrative.prerequisites.length
+      ? `<div class="prerequisites"><h3>Before you start</h3><ul>${narrative.prerequisites.map(p => `<li>${String(p).replace(/</g, '&lt;')}</li>`).join('')}</ul></div>`
+      : '';
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${String(narrative.title).replace(/<[^>]+>/g, '')}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Inter', -apple-system, sans-serif; color: #1a1a1a; line-height: 1.6; background: #f8f9fa; }
+    .layout { display: flex; max-width: 1200px; margin: 0 auto; min-height: 100vh; }
+    .sidebar { width: 260px; flex-shrink: 0; padding: 24px 16px; position: sticky; top: 0; height: 100vh; overflow-y: auto; background: #fff; border-right: 1px solid #e5e7eb; }
+    .sidebar h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin: 0 0 12px 0; }
+    .toc a { display: block; padding: 8px 12px; border-radius: 6px; color: #374151; text-decoration: none; font-size: 0.9rem; }
+    .toc a:hover { background: #f3f4f6; }
+    .toc a.active { background: #eef2ff; color: #4338ca; font-weight: 600; }
+    .main { flex: 1; padding: 40px 48px 80px; }
+    .article { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); padding: 48px 56px; }
+    h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 16px 0; }
+    .intro { font-size: 1.05rem; color: #4b5563; margin: 0 0 24px 0; }
+    .prerequisites { margin: 0 0 32px 0; padding: 20px 24px; background: #f0f9ff; border-radius: 8px; border-left: 4px solid #0ea5e9; }
+    .prerequisites h3 { font-size: 0.95rem; margin: 0 0 8px 0; color: #0c4a6e; }
+    .prerequisites ul { margin: 0; padding-left: 20px; color: #374151; }
+    .step-section { margin: 0 0 40px 0; }
+    .step-section:last-child { margin-bottom: 0; }
+    .step-heading { font-size: 1.15rem; font-weight: 600; margin: 0 0 8px 0; display: flex; align-items: center; gap: 12px; }
+    .step-badge { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: #4338ca; color: #fff; font-size: 0.85rem; font-weight: 700; flex-shrink: 0; }
+    .step-page-title { font-size: 0.85rem; color: #6b7280; margin: 0 0 12px 0; }
+    .screenshot-wrap { margin-top: 12px; }
+    .screenshot-container { position: relative; display: inline-block; max-width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb; }
+    .step-screenshot { display: block; max-width: 100%; height: auto; }
+    .highlight-box { position: absolute; border: 2px solid #dc2626; border-radius: 4px; pointer-events: none; box-shadow: 0 0 0 2px rgba(220,38,38,0.3); }
+    .no-screenshot { padding: 40px; background: #f3f4f6; color: #6b7280; text-align: center; border-radius: 8px; }
+    @media (max-width: 768px) { .layout { flex-direction: column; } .sidebar { position: relative; height: auto; width: 100%; } }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>On this page</h3>
+      <nav class="toc">
+        ${tocItems.map((item, i) => `<a href="#step-${i + 1}" class="toc-link" data-step="${i + 1}">${item.num}. ${item.text}</a>`).join('')}
+      </nav>
+    </aside>
+    <main class="main">
+      <article class="article">
+        <h1>${String(narrative.title).replace(/<[^>]+>/g, '')}</h1>
+        <p class="intro">${String(narrative.intro).replace(/<[^>]+>/g, '') || 'Follow the steps below.'}</p>
+        ${prereqsHtml}
+        ${stepSections}
+      </article>
+    </main>
+  </div>
+  <script>
+    (function() {
+      var links = document.querySelectorAll('.toc-link');
+      function updateActive() {
+        var sections = document.querySelectorAll('.step-section');
+        var scrollY = window.scrollY;
+        for (var i = sections.length - 1; i >= 0; i--) {
+          if (sections[i].offsetTop - 100 <= scrollY) {
+            links.forEach(function(l) { l.classList.remove('active'); });
+            var a = document.querySelector('.toc-link[data-step="' + (i + 1) + '"]');
+            if (a) a.classList.add('active');
+            break;
+          }
+        }
+      }
+      window.addEventListener('scroll', updateActive);
+      updateActive();
+    })();
+  </script>
+</body>
+</html>`;
+
+    const publishedDir = path.join(__dirname, '..', '..', 'published');
+    await fs.mkdir(publishedDir, { recursive: true });
+    const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filePath = path.join(publishedDir, safeId + '.html');
+    await fs.writeFile(filePath, html, 'utf8');
+
+    const publicUrl = baseUrl + '/published/' + safeId + '.html';
+    console.log('ClickTut: Published', id, '->', publicUrl);
+    res.json({ success: true, url: publicUrl });
+  } catch (error) {
+    console.error('Error publishing tutorial:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Serve screenshots
 router.get('/:id/screenshots/:stepNumber', async (req, res) => {
   try {
