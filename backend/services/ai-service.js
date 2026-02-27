@@ -4,6 +4,7 @@
 const Replicate = require('replicate');
 const path = require('path');
 const fs = require('fs').promises;
+const sharp = require('sharp');
 
 // Mask sensitive information (usernames, emails, tokens)
 function maskSensitiveData(text) {
@@ -117,27 +118,44 @@ class AIService {
   }
 
   /**
-   * Analyze a screenshot with Gemini vision to get UI context (what's on screen, what action is happening).
-   * Used alongside DOM/click data to double-verify and improve instruction accuracy.
+   * Analyze a screenshot with Gemini vision. Optionally sends a 200x200 crop at click coords to focus on the element (Gemini recommendation).
    */
-  async analyzeScreenshotWithVision(screenshotPath, stepIndex = 0) {
+  async analyzeScreenshotWithVision(screenshotPath, stepIndex = 0, stepForCrop = null) {
     if (!this.geminiVision || !screenshotPath) return null;
     try {
       const resolved = path.isAbsolute(screenshotPath)
         ? screenshotPath
         : path.resolve(process.cwd(), screenshotPath);
       const buffer = await fs.readFile(resolved);
-      const base64 = buffer.toString('base64');
+      const coords = stepForCrop?.clickData?.coordinates;
+      const viewport = stepForCrop?.clickData?.page?.viewport;
+      let imagePart = { inlineData: { data: buffer.toString('base64'), mimeType: 'image/png' } };
+      // When we have coordinates and viewport, add a 200x200 crop so vision focuses on the clicked element
+      if (coords && viewport && typeof coords.x === 'number' && typeof coords.y === 'number' && stepIndex > 0) {
+        try {
+          const meta = await sharp(buffer).metadata();
+          const w = meta.width || viewport.width || 0;
+          const h = meta.height || viewport.height || 0;
+          const size = 200;
+          const left = Math.max(0, Math.min(w - size, Math.round(coords.x - size / 2)));
+          const top = Math.max(0, Math.min(h - size, Math.round(coords.y - size / 2)));
+          const cropW = Math.min(size, w - left);
+          const cropH = Math.min(size, h - top);
+          if (cropW >= 20 && cropH >= 20) {
+            const cropBuffer = await sharp(buffer)
+              .extract({ left, top, width: cropW, height: cropH })
+              .png()
+              .toBuffer();
+            imagePart = { inlineData: { data: cropBuffer.toString('base64'), mimeType: 'image/png' } };
+          }
+        } catch (e) {
+          // fallback to full image
+        }
+      }
       const isFirstStep = stepIndex === 0;
       const prompt = isFirstStep
         ? `This is the FIRST step of a tutorial. Describe in 1-2 sentences: what page or app this is (e.g. "Replicate dashboard", "GitHub home"), and whether the user is simply starting here (e.g. "User is on the dashboard ready to start"). If it looks like a main/dashboard/home page with no specific button clicked yet, say so. Be concise.`
-        : `Describe this browser UI screenshot in 2-3 short sentences for a tutorial writer.
-1) What page or screen is this, and what is the main focus (e.g. form, table, token/code area)?
-2) What action has the user likely just done or is about to do?
-3) What is the OUTCOME or RESULT of that action? (e.g. "copies the API key to clipboard", "opens a menu", "saves the form", "deletes the item"). Infer from context (icons, labels, nearby text, what's on screen). Be concise.`;
-      const imagePart = {
-        inlineData: { data: base64, mimeType: 'image/png' }
-      };
+        : `This image shows the element the user clicked (or a crop around it). In 2-3 short sentences: 1) What is this element (button, icon, link, field)? 2) What does clicking or using it do? (e.g. "copies the API key to clipboard", "opens a menu", "saves the form"). Be concise.`;
       const result = await this.geminiVision.generateContent([prompt, imagePart]);
       const text = result?.response?.text?.();
       return text ? text.trim() : null;
@@ -169,11 +187,41 @@ class AIService {
     }
   }
 
+  /**
+   * Two-pass: get high-level goal of the sequence so step instructions stay cohesive (Gemini recommendation).
+   */
+  async getHighLevelGoal(steps, tutorialTitle = null) {
+    if (!this.provider || !steps.length) return null;
+    const summary = steps.map((s, i) => {
+      const el = s.clickData?.element || {};
+      const page = s.clickData?.page || {};
+      const action = el.actionType || 'click';
+      const label = el.text || el.ariaLabel || el.attributes?.title || el.placeholder || (el.tag || 'element');
+      const short = typeof label === 'string' ? label.substring(0, 50) : 'element';
+      return `Step ${i + 1}: ${action} on "${short}" (page: ${page.title || page.url || '?'})`;
+    }).join('. ');
+    const prompt = `Given this sequence of user actions: ${summary}. ${tutorialTitle ? `Tutorial title: "${tutorialTitle}".` : ''} What is the high-level goal of this sequence in one short sentence? (e.g. "The user is adding a new API key", "The user is logging in and changing settings"). Reply with ONLY that one sentence, no other text.`;
+    try {
+      const out = await this.generateWithReplicate(prompt);
+      const goal = (out || '').trim().replace(/^["']|["']$/g, '');
+      if (goal) {
+        console.log('🎯 High-level goal:', goal);
+        return goal;
+      }
+    } catch (e) {
+      console.warn('ClickTut: Goal pass failed', e.message);
+    }
+    return null;
+  }
+
   // Generate instructions for all steps in a tutorial
   async generateTutorialInstructions(steps, tutorialTitle = null) {
     if (!this.provider) {
       throw new Error('No AI provider configured. Please set REPLICATE_API_TOKEN');
     }
+
+    // Pass 1: get high-level goal so instructions are cohesive
+    const highLevelGoal = await this.getHighLevelGoal(steps, tutorialTitle);
 
     // Optional: run vision analysis on each screenshot for better context (parallel)
     let imageAnalyses = [];
@@ -181,7 +229,7 @@ class AIService {
       console.log('📸 Running AI image analysis on screenshots for extra context...');
       imageAnalyses = await Promise.all(
         steps.map((step, i) =>
-          step.screenshot ? this.analyzeScreenshotWithVision(step.screenshot, i) : Promise.resolve(null)
+          step.screenshot ? this.analyzeScreenshotWithVision(step.screenshot, i, step) : Promise.resolve(null)
         )
       );
     }
@@ -201,6 +249,8 @@ class AIService {
           classes: element.classes || [],
           text: element.text,
           selector: element.selector,
+          selectorStack: element.selectorStack || null,
+          contextSandwich: element.contextSandwich || null,
           attributes: element.attributes || {},
           actionType: element.actionType || 'click',
           inputType: element.inputType || null,
@@ -215,6 +265,7 @@ class AIService {
         page: {
           title: page.title,
           url: page.url,
+          pageHeading: page.pageHeading || null,
           viewport: viewport
         },
         clickLocation: {
@@ -234,7 +285,7 @@ class AIService {
       };
     });
 
-    const prompt = this.buildTutorialPrompt(stepsContext, tutorialTitle);
+    const prompt = this.buildTutorialPrompt(stepsContext, tutorialTitle, highLevelGoal);
     
     // Debug: Log the prompt to see what we're sending (first 1000 chars)
     if (prompt && typeof prompt === 'string') {
@@ -289,8 +340,8 @@ Step ${stepNumber} of ${totalSteps}:
 Instruction:`;
   }
 
-  // Build prompt for entire tutorial
-  buildTutorialPrompt(stepsContext, tutorialTitle = null) {
+  // Build prompt for entire tutorial (with optional high-level goal from two-pass)
+  buildTutorialPrompt(stepsContext, tutorialTitle = null, highLevelGoal = null) {
     // Safety check
     if (!stepsContext || !Array.isArray(stepsContext) || stepsContext.length === 0) {
       console.error('❌ Error: stepsContext is invalid:', stepsContext);
@@ -300,7 +351,18 @@ Instruction:`;
     let prompt = `You are analyzing a user's interaction with a web application to create a step-by-step tutorial.
 
 ${tutorialTitle ? `TUTORIAL TITLE: "${tutorialTitle}"\n` : ''}
+${highLevelGoal ? `TUTORIAL GOAL: ${highLevelGoal}\nUse this goal so each step instruction fits the overall purpose.\n` : ''}
 OVERVIEW: The user performed ${stepsContext.length} sequential actions to complete a task. Analyze the full workflow to understand the goal and create clear instructions.
+
+FEW-SHOT STYLE (mimic intent and outcome):
+- Context: User clicked <button> "Save" inside "Profile Settings" form, next to "Cancel". Goal: saving profile.
+  Instruction: "Click 'Save' to save your profile changes."
+- Context: User clicked icon (copy) next to API key value. Page: API tokens. Goal: adding API key.
+  Instruction: "Click the copy icon to copy the API key to your clipboard."
+- Context: User typed in "Token name" field, then clicked "Create token". Goal: adding API key.
+  Instruction (type step): "Enter a name for your token in the 'Token name' field."
+- Context: Step 1 – user clicked on paragraph "No deployments found" on Dashboard. Goal: getting started.
+  Instruction: "Open the Replicate dashboard (or ensure you're on the home page)."
 
 The complete sequence of actions:
 
@@ -314,10 +376,11 @@ ${stepsContext.map((ctx, idx) => {
   stepInfo += `STEP ${idx + 1} of ${stepsContext.length}\n`;
   stepInfo += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
   
-  // Page context
+  // Page context (incl. page heading for "where am I" - Gemini recommendation)
   stepInfo += `📍 PAGE CONTEXT:\n`;
   stepInfo += `   Title: "${page.title || 'Unknown'}"\n`;
   stepInfo += `   URL: ${page.url || 'N/A'}\n`;
+  if (page.pageHeading) stepInfo += `   Page heading: "${page.pageHeading}"\n`;
   if (viewport.width && viewport.height) {
     stepInfo += `   Viewport: ${viewport.width}x${viewport.height} pixels\n`;
   }
@@ -335,9 +398,10 @@ ${stepsContext.map((ctx, idx) => {
   }
   stepInfo += `\n`;
   
-  // Element details
+  // Element details (context sandwich = intent-focused description - Gemini recommendation)
   const actionType = element.actionType || 'click';
   stepInfo += `🎯 ELEMENT ${actionType.toUpperCase()}:\n`;
+  if (element.contextSandwich) stepInfo += `   Context: ${element.contextSandwich}\n`;
   stepInfo += `   Type: <${element.tag || 'unknown'}>\n`;
   
   // Image/Icon detection context
@@ -402,6 +466,11 @@ ${stepsContext.map((ctx, idx) => {
   
   if (element.selector) {
     stepInfo += `   Selector: ${element.selector}\n`;
+  }
+  if (element.selectorStack && typeof element.selectorStack === 'object') {
+    const s = element.selectorStack;
+    const parts = [s.id && `id=${s.id}`, s.robust && `robust=${s.robust}`, s.xpath && `xpath=${s.xpath}`, s.innerText && `innerText="${(s.innerText || '').substring(0, 40)}"`].filter(Boolean);
+    if (parts.length) stepInfo += `   Selector stack (replay): ${parts.join(', ')}\n`;
   }
   
   if (element.attributes && typeof element.attributes === 'object') {
@@ -604,18 +673,42 @@ IMPORTANT:
     return prompt;
   }
 
+  /**
+   * Call Replicate with retry on 429 (rate limit). Replicate limits to ~6 req/min when account has < $5 credit.
+   */
+  async replicateRunWithRetry(input, maxRetries = 3) {
+    let lastErr;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.replicate.run(this.model, { input });
+      } catch (err) {
+        lastErr = err;
+        const is429 = (err.status === 429) || (err.message && err.message.includes('429'));
+        let waitSec = 7;
+        try {
+          const ra = err.response?.headers?.get?.('retry-after') ?? err.response?.headers?.['retry-after'];
+          if (ra) waitSec = Math.max(7, parseInt(String(ra), 10) || 7);
+          else {
+            const m = err.message?.match(/retry_after["\s:]+(\d+)/i);
+            if (m) waitSec = Math.max(7, parseInt(m[1], 10) || 7);
+          }
+        } catch (_) {}
+        if (attempt < maxRetries && is429) {
+          console.log(`⏳ Replicate rate limited (429). Waiting ${waitSec}s then retry (${attempt}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, waitSec * 1000));
+        } else {
+          throw err;
+        }
+      }
+    }
+    throw lastErr;
+  }
+
   // Generate with Replicate (Gemini)
   async generateWithReplicate(prompt) {
-    // Gemini models use just prompt
     const fullPrompt = `You are a helpful assistant that creates clear, concise tutorial instructions for web applications.\n\n${prompt}`;
-    
-    const input = {
-      prompt: fullPrompt
-    };
-
-    const output = await this.replicate.run(this.model, { input });
-    
-    // Replicate returns an array of strings, join them
+    const input = { prompt: fullPrompt };
+    const output = await this.replicateRunWithRetry(input);
     const result = Array.isArray(output) ? output.join('') : output;
     return result.trim();
   }
@@ -645,7 +738,7 @@ Remember: Return ONLY the JSON array, nothing else.`;
     };
 
     console.log(`📤 Sending request to ${this.model} for ${stepCount} steps...`);
-    const output = await this.replicate.run(this.model, { input });
+    const output = await this.replicateRunWithRetry(input);
     
     // Replicate returns an array of strings, join them
     const result = Array.isArray(output) ? output.join('') : output;

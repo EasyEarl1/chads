@@ -175,6 +175,8 @@
       classes: Array.from(target.classList || []),
       text: getElementText(target),
       selector: generateSelector(target),
+      selectorStack: getSelectorStack(target),
+      contextSandwich: getContextSandwich(target),
       attributes: getRelevantAttributes(target),
       actionType: actionType, // 'click', 'submit', etc.
       // Enhanced context for images/icons
@@ -208,10 +210,11 @@
       elementPercentY: rect.height > 0 ? ((event.clientY - rect.top) / rect.height * 100).toFixed(1) : 0
     };
 
-    // Get comprehensive page context
+    // Get comprehensive page context (incl. page heading for "where am I")
     const pageContext = {
       url: window.location.href,
       title: document.title,
+      pageHeading: getClosestHeading(),
       viewport: {
         width: window.innerWidth,
         height: window.innerHeight
@@ -252,13 +255,15 @@
     const isPassword = inputType === 'password';
     const inputValue = isPassword ? '[PASSWORD FIELD]' : (target.value || target.textContent || '');
     
-    // Get element information
+    // Get element information (incl. selector stack and context sandwich for replay/intent)
     const elementInfo = {
       tag: target.tagName.toLowerCase(),
       id: target.id || null,
       classes: Array.from(target.classList || []),
       text: getElementText(target),
       selector: generateSelector(target),
+      selectorStack: getSelectorStack(target),
+      contextSandwich: getContextSandwich(target),
       attributes: getRelevantAttributes(target),
       actionType: 'input',
       inputType: inputType,
@@ -276,10 +281,11 @@
       pageY: rect.top + window.scrollY + (rect.height / 2)
     };
 
-    // Get page context
+    // Get page context (incl. page heading)
     const pageContext = {
       url: window.location.href,
       title: document.title,
+      pageHeading: getClosestHeading(),
       viewport: {
         width: window.innerWidth,
         height: window.innerHeight
@@ -397,6 +403,73 @@
       if (path.length > 5) break; // Limit depth
     }
     return path.join(' > ');
+  }
+
+  // Selector stack for robust replay (id, data-testid/aria-label, xpath, innerText)
+  function getSelectorStack(element) {
+    const id = element.id ? `#${element.id}` : null;
+    let robust = null;
+    const testId = element.getAttribute('data-testid');
+    const ariaLabel = element.getAttribute('aria-label');
+    if (testId) robust = `[data-testid="${testId}"]`;
+    else if (ariaLabel) robust = `[aria-label="${ariaLabel.replace(/"/g, '\\"')}"]`;
+    const xpath = getSimpleXPath(element);
+    const innerText = getElementText(element) || null;
+    return { id, robust, xpath, innerText: innerText ? innerText.substring(0, 80) : null };
+  }
+
+  function getSimpleXPath(el) {
+    const parts = [];
+    while (el && el.nodeType === Node.ELEMENT_NODE) {
+      let part = el.tagName.toLowerCase();
+      if (el.id) {
+        parts.unshift(part + '[@id="' + el.id + '"]');
+        break;
+      }
+      const siblings = Array.from(el.parentElement?.children || []).filter(n => n.tagName === el.tagName);
+      const idx = siblings.indexOf(el) + 1;
+      parts.unshift(part + (siblings.length > 1 ? '[' + idx + ']' : ''));
+      el = el.parentElement;
+      if (parts.length > 8) break;
+    }
+    return '/' + parts.join('/');
+  }
+
+  // Closest page heading (h1/h2) for "where am I" context
+  function getClosestHeading() {
+    const h = document.querySelector('h1, h2');
+    return h ? (h.textContent || '').trim().substring(0, 100) : null;
+  }
+
+  // Context sandwich: "User clicked X inside Y, next to Z" for intent (Gemini recommendation)
+  function getContextSandwich(target) {
+    const tag = target.tagName.toLowerCase();
+    const label = target.getAttribute('aria-label') || target.title || getElementText(target) || tag;
+    const labelStr = typeof label === 'string' ? label.substring(0, 60) : tag;
+    let inside = null;
+    let parent = target.parentElement;
+    for (let i = 0; i < 5 && parent && parent !== document.body; i++) {
+      const name = parent.getAttribute('aria-label') || parent.getAttribute('data-section') || (parent.tagName === 'FORM' ? (parent.getAttribute('name') || 'form') : null);
+      if (name) {
+        inside = name;
+        break;
+      }
+      if (parent.tagName === 'FORM') {
+        inside = parent.getAttribute('name') || 'form';
+        break;
+      }
+      parent = parent.parentElement;
+    }
+    let nextTo = null;
+    const prev = target.previousElementSibling;
+    const next = target.nextElementSibling;
+    if (prev && (prev.textContent || '').trim()) nextTo = (prev.textContent || '').trim().substring(0, 30);
+    else if (next && (next.textContent || '').trim()) nextTo = (next.textContent || '').trim().substring(0, 30);
+    let s = `User clicked a ${tag} labeled "${labelStr}"`;
+    if (inside) s += ` inside "${inside}"`;
+    if (nextTo) s += `, next to "${nextTo}"`;
+    s += '.';
+    return s;
   }
 
   // Detect if element is an image/icon and gather context
