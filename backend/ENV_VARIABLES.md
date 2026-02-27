@@ -8,8 +8,12 @@ PORT=3000
 NODE_ENV=development
 
 # API Keys
-# Replicate API (recommended - access to multiple models)
+# Replicate API (required for instruction generation)
 REPLICATE_API_TOKEN=your-replicate-api-token-here
+
+# Gemini API (optional - for AI image analysis of screenshots to improve instruction accuracy)
+# Get a free key at https://aistudio.google.com/apikey
+GEMINI_API_KEY=your-google-ai-studio-key-here
 
 # Alternative: Direct API keys (if not using Replicate)
 # OPENAI_API_KEY=sk-your-openai-key-here
@@ -46,6 +50,12 @@ ALLOWED_ORIGINS=http://localhost:3001,http://localhost:5173
 2. Sign up or log in
 3. Navigate to API Keys
 4. Create a new API key
+
+### Gemini (Google AI Studio) – optional, for screenshot vision
+1. Go to https://aistudio.google.com/apikey
+2. Sign in with your Google account
+3. Create an API key
+4. Add `GEMINI_API_KEY=...` to your `.env`. If unset, instruction generation still works without image analysis.
 
 ### ElevenLabs
 1. Go to https://elevenlabs.io/

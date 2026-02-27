@@ -1,7 +1,9 @@
 // ClickTut - AI Service
-// Generates step-by-step instructions using Replicate API
+// Generates step-by-step instructions using Replicate API + optional Gemini vision for screenshot context
 
 const Replicate = require('replicate');
+const path = require('path');
+const fs = require('fs').promises;
 
 // Mask sensitive information (usernames, emails, tokens)
 function maskSensitiveData(text) {
@@ -79,14 +81,69 @@ class AIService {
         auth: process.env.REPLICATE_API_TOKEN
       });
       this.provider = 'replicate';
-      // Using Google Gemini 2.5 Flash - fast and high quality for instruction generation
-      this.model = "google/gemini-2.5-flash"; // Fast, high quality, perfect for tutorials
-      // Alternative models: 
-      // "google/gemini-3.1-pro" (slower but potentially higher quality - 5+ mins per generation)
-      // "mistralai/mistral-7b-instruct-v0.2" (alternative option)
+      this.model = "google/gemini-2.5-flash";
     } else {
       this.provider = null;
       console.warn('⚠️  No Replicate API token found. Set REPLICATE_API_TOKEN in .env');
+    }
+    // Optional: Gemini for vision (screenshot analysis). Uses Google AI Studio key.
+    this.geminiVision = null;
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const { GoogleGenerativeAI } = require('@google/generative-ai');
+        this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        this.geminiVision = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      } catch (e) {
+        console.warn('⚠️  Gemini vision skipped:', e.message);
+      }
+    }
+  }
+
+  /**
+   * Detect if step 1 looks like a "landing" click (user establishing context on a page, not a real UI action).
+   * E.g. clicking on "No deployments found" on a dashboard = they're just starting on that page.
+   */
+  isLikelyLandingStep(stepIndex, element, page) {
+    if (stepIndex !== 0) return false;
+    const tag = (element.tag || '').toLowerCase();
+    const role = (element.attributes?.role || element.ariaRole || '').toLowerCase();
+    const text = (element.text || '').trim();
+    const nonInteractiveTags = ['p', 'div', 'span', 'section', 'main'];
+    const looksLikeEmptyState = /\b(no|zero)\s+.+\s+(found|yet|here|available)\b/i.test(text) ||
+      /no\s+deployments/i.test(text) || /no\s+items/i.test(text) || /nothing\s+to\s+show/i.test(text);
+    const isInteractive = role === 'button' || role === 'link' || role === 'menuitem' ||
+      tag === 'a' || tag === 'button' || tag === 'input' || tag === 'select';
+    return nonInteractiveTags.includes(tag) && !isInteractive && (looksLikeEmptyState || !text || text.length < 10);
+  }
+
+  /**
+   * Analyze a screenshot with Gemini vision to get UI context (what's on screen, what action is happening).
+   * Used alongside DOM/click data to double-verify and improve instruction accuracy.
+   */
+  async analyzeScreenshotWithVision(screenshotPath, stepIndex = 0) {
+    if (!this.geminiVision || !screenshotPath) return null;
+    try {
+      const resolved = path.isAbsolute(screenshotPath)
+        ? screenshotPath
+        : path.resolve(process.cwd(), screenshotPath);
+      const buffer = await fs.readFile(resolved);
+      const base64 = buffer.toString('base64');
+      const isFirstStep = stepIndex === 0;
+      const prompt = isFirstStep
+        ? `This is the FIRST step of a tutorial. Describe in 1-2 sentences: what page or app this is (e.g. "Replicate dashboard", "GitHub home"), and whether the user is simply starting here (e.g. "User is on the dashboard ready to start"). If it looks like a main/dashboard/home page with no specific button clicked yet, say so. Be concise.`
+        : `Describe this browser UI screenshot in 2-3 short sentences for a tutorial writer.
+1) What page or screen is this, and what is the main focus (e.g. form, table, token/code area)?
+2) What action has the user likely just done or is about to do?
+3) What is the OUTCOME or RESULT of that action? (e.g. "copies the API key to clipboard", "opens a menu", "saves the form", "deletes the item"). Infer from context (icons, labels, nearby text, what's on screen). Be concise.`;
+      const imagePart = {
+        inlineData: { data: base64, mimeType: 'image/png' }
+      };
+      const result = await this.geminiVision.generateContent([prompt, imagePart]);
+      const text = result?.response?.text?.();
+      return text ? text.trim() : null;
+    } catch (err) {
+      console.warn('ClickTut: Vision analysis failed for', screenshotPath, err.message);
+      return null;
     }
   }
 
@@ -118,7 +175,18 @@ class AIService {
       throw new Error('No AI provider configured. Please set REPLICATE_API_TOKEN');
     }
 
-    // Build rich context for all steps with full element data, coordinates, and screenshot info
+    // Optional: run vision analysis on each screenshot for better context (parallel)
+    let imageAnalyses = [];
+    if (this.geminiVision) {
+      console.log('📸 Running AI image analysis on screenshots for extra context...');
+      imageAnalyses = await Promise.all(
+        steps.map((step, i) =>
+          step.screenshot ? this.analyzeScreenshotWithVision(step.screenshot, i) : Promise.resolve(null)
+        )
+      );
+    }
+
+    // Build rich context for all steps (DOM + optional image analysis)
     const stepsContext = steps.map((step, index) => {
       const element = step.clickData?.element || {};
       const page = step.clickData?.page || {};
@@ -139,7 +207,6 @@ class AIService {
           inputValue: element.inputValue || null,
           placeholder: element.placeholder || null,
           label: element.label || null,
-          // Image/icon context
           isImage: element.isImage || false,
           imageInfo: element.imageInfo || null,
           parentContext: element.parentContext || null,
@@ -161,7 +228,9 @@ class AIService {
           elementPercentY: coordinates.elementPercentY
         },
         hasScreenshot: !!step.screenshot,
-        timestamp: step.timestamp
+        timestamp: step.timestamp,
+        imageAnalysis: imageAnalyses[index] || null,
+        likelyLandingStep: this.isLikelyLandingStep(index, element, page)
       };
     });
 
@@ -427,9 +496,17 @@ ${stepsContext.map((ctx, idx) => {
     }
   }
   
-  // Screenshot info
+  // Screenshot and optional AI image analysis (double-verify context)
   if (ctx.hasScreenshot) {
     stepInfo += `\n   📸 Screenshot available (shows page state at this moment)\n`;
+  }
+  if (ctx.imageAnalysis && typeof ctx.imageAnalysis === 'string' && ctx.imageAnalysis.trim()) {
+    stepInfo += `\n   📸 IMAGE ANALYSIS (AI vision): ${ctx.imageAnalysis.trim()}\n`;
+  }
+  // Hint when step 1 looks like "user just landed on page" (not a real UI action)
+  if (idx === 0 && ctx.likelyLandingStep) {
+    const pageName = (page.title || page.url || 'this page').replace(/\s*[-|–].*$/, '').trim();
+    stepInfo += `\n   ⚠️  LIKELY LANDING STEP: The user is probably establishing context (e.g. focusing the page or starting here). Do NOT say "Click the text that says ...". Instead write something like: "Open the [site] dashboard", "Start on the ${pageName}", or "Ensure you're on the ${pageName}".\n`;
   }
   
   // Context from previous steps
@@ -445,6 +522,14 @@ ${stepsContext.map((ctx, idx) => {
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+When "IMAGE ANALYSIS (AI vision)" is present for a step, use it to double-verify and enrich your understanding of what the user sees and does; combine it with the element/page data for more accurate instructions.
+
+INTENT AND OUTCOME:
+- Prefer describing WHY the user did something (the goal of the step) over the exact element clicked.
+- For each step, infer the OUTCOME or RESULT of the action when you can (e.g. "Click the copy icon to copy the API key to your clipboard", "Click Save to store your changes"). Use IMAGE ANALYSIS (which may describe what the action achieves), aria-label, title, nearby text, and the flow (e.g. previous step created an API key, so a copy icon likely copies it). Prefer instructions that tell the user what they will achieve, not just what to click.
+- For STEP 1: If the user clicked on non-interactive content (e.g. a paragraph, empty-state text like "No deployments found") on a dashboard or home page, they are almost certainly just starting on that page. Write an instruction like "Open the [Site] dashboard", "Start on the [Page Name]", or "Ensure you're on the [Page Name]". Do NOT write "Click the text that says 'No deployments found'" or similar.
+- When LIKELY LANDING STEP is shown for step 1, follow that hint: describe where the user is starting, not what they clicked.
+
 ANALYSIS INSTRUCTIONS:
 
 Analyze the COMPLETE workflow to understand:
@@ -454,7 +539,7 @@ Analyze the COMPLETE workflow to understand:
 4. How do the steps relate to each other?
 
 For EACH step, analyze:
-- What element was interacted with and why (button, link, menu item, form field, input, image/icon, etc.)
+- What was the USER'S INTENT (e.g. "starting on the dashboard", "opening the menu", "submitting the form") and what element was interacted with and why (button, link, menu item, form field, input, image/icon, etc.)
 - What the element's purpose is based on:
   * For IMAGES/ICONS: Analyze the image context carefully:
     - If IMAGE/ICON DETECTED is shown, prioritize understanding it's an image/icon element
@@ -469,23 +554,26 @@ For EACH step, analyze:
   * The page context (what page is this, what is it for?)
   * The sequence (what came before, what comes after?)
 - What action is being performed (navigate, submit, select, type/enter text, click image/icon, etc.)
+- What is the OUTCOME or RESULT of this action? (e.g. "copies the key to clipboard", "opens dropdown", "saves the form"). Use IMAGE ANALYSIS, labels, icon context, and the sequence (e.g. after "create token", a copy icon copies that token).
 
 GENERATION RULES:
 
 Generate clear, specific, and actionable instructions for each step. Each instruction should:
-1. For IMAGES/ICONS: 
+1. For STEP 1 when it is a landing/context step (e.g. user on dashboard home, clicked non-interactive or empty-state text): Describe WHERE the user is starting (e.g. "Open the Replicate dashboard" or "Start on the Replicate home page"), NOT the literal element. Never say "Click the text that says 'No deployments found'" for such steps.
+2. For IMAGES/ICONS:
    - If IMAGE/ICON DETECTED is shown, identify what the icon represents (e.g., "Click your profile picture", "Click the settings icon", "Click the user avatar")
    - Use alt text, icon classes, or context to identify the icon (e.g., if classes contain "profile" or "avatar", say "profile picture/avatar")
    - If the element is an image but has text, prioritize describing it as an image/icon, not just the text
    - Examples: "Click your profile picture" (not "Click [Your Name]"), "Click the menu icon" (not "Click ☰")
-2. Use the element's VISIBLE TEXT when available for non-image elements (e.g., "Click the 'Add Product' button" not "Click the button")
-3. For input/typing steps: Describe what to type and where (e.g., "Type 'John Doe' in the Name field" or "Enter your email address in the Email input")
-4. Be specific about location if helpful (e.g., "Click the 'Save' button in the top right")
-5. Describe the action clearly (Click, Select, Type/Enter, Navigate to, Submit, Click [icon type], etc.)
-6. Be written in second person ("Click...", "Type...", "Enter...", "Select...")
-7. Be 1-2 sentences maximum
-8. Be friendly and professional
-9. Consider the flow - if it's part of a sequence, mention context (e.g., "Next, click..." or "Then, type...")
+3. Use the element's VISIBLE TEXT when available for non-image elements (e.g., "Click the 'Add Product' button" not "Click the button")
+4. For input/typing steps: Describe what to type and where (e.g., "Type 'John Doe' in the Name field" or "Enter your email address in the Email input")
+5. Be specific about location if helpful (e.g., "Click the 'Save' button in the top right")
+6. Describe the action clearly (Click, Select, Type/Enter, Navigate to, Submit, Click [icon type], etc.)
+7. When the action has an obvious result (copy, save, delete, open menu, download), include that result in the instruction (e.g. "Click the copy icon to copy the API key to your clipboard" not just "Click the copy icon"). Use IMAGE ANALYSIS and the preceding steps (e.g. "create token" then an icon = likely copy) to infer the outcome.
+8. Be written in second person ("Click...", "Type...", "Enter...", "Select...")
+9. Be 1-2 sentences maximum
+10. Be friendly and professional
+11. Consider the flow - if it's part of a sequence, mention context (e.g., "Next, click..." or "Then, type..."). Prefer describing the PURPOSE and RESULT of each step, not just the literal element.
 
 CRITICAL OUTPUT FORMAT:
 
