@@ -93,7 +93,7 @@ class AIService {
       try {
         const { GoogleGenerativeAI } = require('@google/generative-ai');
         this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        this.geminiVision = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        this.geminiVision = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
       } catch (e) {
         console.warn('⚠️  Gemini vision skipped:', e.message);
       }
@@ -115,6 +115,96 @@ class AIService {
     const isInteractive = role === 'button' || role === 'link' || role === 'menuitem' ||
       tag === 'a' || tag === 'button' || tag === 'input' || tag === 'select';
     return nonInteractiveTags.includes(tag) && !isInteractive && (looksLikeEmptyState || !text || text.length < 10);
+  }
+
+  /**
+   * Creative pass for thumbnail: Gemini analyzes tutorial and returns hero step, condensed title, brand color.
+   * Returns { heroIndex, condensedTitle, brandColor } where brandColor is hex e.g. "#95bf47".
+   */
+  async getThumbnailAssets(tutorialData) {
+    const steps = tutorialData.steps || [];
+    const title = (tutorialData.title || 'Tutorial').trim();
+    const defaultIndex = steps.length >= 2 ? steps.length - 2 : Math.max(0, steps.length - 1);
+    const defaultTitle = (title || 'Tutorial').split(/\s+/).slice(0, 4).join(' ').toUpperCase() || 'TUTORIAL';
+    const defaultColor = '#374151';
+
+    if (!this.geminiVision || !steps || steps.length === 0) {
+      return { heroIndex: defaultIndex, condensedTitle: defaultTitle, brandColor: defaultColor };
+    }
+
+    const maxImages = 10;
+    const stepsToSend = steps.slice(0, maxImages).filter(s => s.screenshot);
+    if (stepsToSend.length === 0) return { heroIndex: defaultIndex, condensedTitle: defaultTitle, brandColor: defaultColor };
+
+    try {
+      const parts = [];
+      const prompt = `You are a YouTube thumbnail creative director.
+
+Tutorial title: "${title}"
+
+Look at the following ${stepsToSend.length} step screenshots (first image = step 0, second = step 1, etc.).
+
+Tasks:
+1. Hero: Which step index (0 to ${stepsToSend.length - 1}) shows the "success state" or main result? (e.g. API key visible, confirmation, form submitted, key list). Prefer the climax step, not the landing step.
+2. Title: Condense the tutorial into exactly 3-4 punchy, ALL CAPS words (e.g. "SET UP SHIPPING", "GET API KEY", "ABANDONED CART SETUP").
+3. Brand: From the screenshots, what is the dominant brand/UI color of the platform? Return a single hex color (e.g. "#95bf47" for Shopify green, "#6366f1" for indigo). If unclear, use "#374151".
+
+Reply with ONLY a JSON object, no markdown: { "heroIndex": <number>, "condensedTitle": "<3-4 words ALL CAPS>", "brandColor": "#hexcolor" }`;
+
+      parts.push({ text: prompt });
+      for (let i = 0; i < stepsToSend.length; i++) {
+        const resolved = path.isAbsolute(stepsToSend[i].screenshot)
+          ? stepsToSend[i].screenshot
+          : path.resolve(process.cwd(), stepsToSend[i].screenshot);
+        const buffer = await fs.readFile(resolved);
+        parts.push({ inlineData: { mimeType: 'image/png', data: buffer.toString('base64') } });
+      }
+
+      const result = await this.geminiVision.generateContent(parts);
+      const text = result?.response?.text?.();
+      if (!text) return { heroIndex: defaultIndex, condensedTitle: defaultTitle, brandColor: defaultColor };
+
+      const jsonStr = (text || '').replace(/```json?\s*|\s*```/g, '').trim();
+      const match = jsonStr.match(/\{[\s\S]*\}/);
+      if (!match) return { heroIndex: defaultIndex, condensedTitle: defaultTitle, brandColor: defaultColor };
+
+      const parsed = JSON.parse(match[0]);
+      let heroIndex = parseInt(parsed.heroIndex, 10);
+      if (Number.isNaN(heroIndex) || heroIndex < 0) heroIndex = defaultIndex;
+      if (heroIndex >= stepsToSend.length) heroIndex = stepsToSend.length - 1;
+      const condensedTitle = (parsed.condensedTitle || defaultTitle).trim().toUpperCase().substring(0, 50) || defaultTitle;
+      let brandColor = (parsed.brandColor || defaultColor).trim();
+      if (!/^#[0-9a-fA-F]{3,6}$/.test(brandColor)) brandColor = defaultColor;
+      return { heroIndex, condensedTitle, brandColor };
+    } catch (e) {
+      console.warn('ClickTut: getThumbnailAssets failed', e.message);
+      return { heroIndex: defaultIndex, condensedTitle: defaultTitle, brandColor: defaultColor };
+    }
+  }
+
+  /**
+   * Generate studio background image via Replicate (Flux Schnell). Saves to outputPath. Returns path or null.
+   */
+  async generateStudioBackground(brandColorHex, outputPath) {
+    if (!this.replicate || !outputPath) return null;
+    const color = (brandColorHex || '#374151').replace(/^#/, '');
+    try {
+      const prompt = `Professional YouTube studio background, abstract tech shapes, soft bokeh, #${color} ambient lighting, out of focus, high resolution, 16:9 aspect ratio, no text, no people`;
+      const model = 'black-forest-labs/flux-schnell';
+      const output = await this.replicate.run(model, {
+        input: { prompt, aspect_ratio: '16:9' }
+      });
+      const imageUrl = Array.isArray(output) ? output[0] : (typeof output === 'string' ? output : output?.url);
+      if (!imageUrl || typeof imageUrl !== 'string') return null;
+      const axios = require('axios');
+      const res = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 60000 });
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+      await fs.writeFile(outputPath, Buffer.from(res.data));
+      return outputPath;
+    } catch (e) {
+      console.warn('ClickTut: generateStudioBackground failed', e.message);
+      return null;
+    }
   }
 
   /**

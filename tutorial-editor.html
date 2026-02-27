@@ -259,7 +259,9 @@
   </div>
 
   <script>
-    const API_BASE = 'http://localhost:3000/api';
+    const API_BASE = (typeof window !== 'undefined' && window.location && window.location.origin && !window.location.origin.startsWith('file'))
+      ? window.location.origin + '/api'
+      : 'http://localhost:3000/api';
     let currentTutorial = null;
     let hasChanges = false;
 
@@ -397,12 +399,30 @@
           </div>
         </div>
 
+        <div class="thumbnail-section" style="margin: 20px 0; padding: 20px; background: #f9fafb; border-radius: 8px;">
+          <div class="section-title">🖼️ Thumbnail</div>
+          <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;">
+            <div>
+              <img id="thumbPreview" src="${API_BASE}/tutorials/${tutorial._id}/thumbnail?t=${Date.now()}" alt="Thumbnail" style="max-width: 320px; height: auto; border-radius: 8px; border: 1px solid #e5e7eb; display: block;" onerror="this.style.display='none'; document.getElementById('thumbPlaceholder').style.display='block';">
+              <div id="thumbPlaceholder" style="display: none; width: 320px; height: 180px; background: #e5e7eb; border-radius: 8px; color: #6b7280; font-size: 14px; padding: 16px; box-sizing: border-box;">No thumbnail. Generate instructions or click Regenerate.</div>
+            </div>
+            <div>
+              <button class="btn" style="background: #7c3aed; color: white;" onclick="regenerateThumbnail('${tutorial._id}')">✨ Regenerate thumbnail</button>
+            </div>
+          </div>
+        </div>
+
         <div class="steps-container">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
             <h2>Steps (${tutorial.steps.length})</h2>
-            <button class="btn btn-success" onclick="generateInstructions('${tutorial._id}')">
-              ${tutorial.steps.some(s => s.instruction) ? '🔄 Regenerate Instructions' : '🤖 Generate Instructions'}
-            </button>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button class="btn btn-success" onclick="generateInstructions('${tutorial._id}')">
+                ${tutorial.steps.some(s => s.instruction) ? '🔄 Regenerate Instructions' : '🤖 Generate Instructions'}
+              </button>
+              <button class="btn" style="background: #4338ca; color: white;" onclick="publishTutorial('${tutorial._id}')" title="Generate a help article page">
+                📄 Publish
+              </button>
+            </div>
           </div>
       `;
 
@@ -605,6 +625,41 @@
       displayTutorial(currentTutorial);
     }
 
+    async function publishTutorial(tutorialId) {
+      try {
+        const response = await fetch(`${API_BASE}/tutorials/${tutorialId}/publish`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to publish tutorial');
+        }
+        if (data.url) {
+          window.open(data.url, '_blank');
+        } else {
+          alert('Published, but no URL returned.');
+        }
+      } catch (e) {
+        alert('Error publishing: ' + (e.message || e));
+      }
+    }
+
+    async function regenerateThumbnail(tutorialId) {
+      try {
+        const r = await fetch(`${API_BASE}/tutorials/${tutorialId}/thumbnail`, { method: 'POST' });
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || 'Failed');
+        const img = document.getElementById('thumbPreview');
+        if (img) { img.src = `${API_BASE}/tutorials/${tutorialId}/thumbnail?t=${Date.now()}`; img.style.display = 'block'; }
+        document.getElementById('thumbPlaceholder').style.display = 'none';
+        if (data.tutorial) { currentTutorial = data.tutorial; displayTutorial(currentTutorial); }
+        alert('Thumbnail generated.');
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+    }
+
     async function generateInstructions(tutorialId) {
       if (!confirm('Generate AI instructions for this tutorial?')) {
         return;
@@ -621,17 +676,22 @@
           body: JSON.stringify({ regenerate: true })
         });
 
-        const data = await response.json();
-        
+        let data;
+        try {
+          data = await response.json();
+        } catch (_) {
+          throw new Error(response.ok ? 'Invalid response from server' : 'Failed to fetch. Is the server running at ' + API_BASE.replace('/api', '') + '?');
+        }
         if (!data.success) {
           throw new Error(data.error || 'Failed to generate instructions');
         }
 
-        alert('✅ Instructions generated successfully!');
-        loadTutorial(); // Reload to see updated instructions
+        alert('✅ Instructions generated successfully! Thumbnail may still be generating in the background.');
+        loadTutorial();
       } catch (error) {
         content.innerHTML = originalContent;
-        alert('Error: ' + error.message);
+        const msg = error.message || (error.name === 'TypeError' && error.message.includes('fetch') ? 'Network error. Check the server is running and CORS allows this origin.' : 'Failed to fetch');
+        alert('Error: ' + msg);
       }
     }
 

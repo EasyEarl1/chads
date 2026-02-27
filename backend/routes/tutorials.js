@@ -3,10 +3,12 @@
 
 const express = require('express');
 const router = express.Router();
+const https = require('https');
 const Tutorial = require('../models/tutorial');
 const fs = require('fs').promises;
 const path = require('path');
 const sharp = require('sharp');
+const { processHeroCard, composeThumbnail } = require('../utils/thumbnailCompositor');
 
 // File-based storage for persistence
 const STORAGE_FILE = path.join(__dirname, '..', 'data', 'tutorials.json');
@@ -268,6 +270,83 @@ function sameInputField(stepA, stepB) {
   return idA && idB && (idA === idB || (elA?.selector && elB?.selector && elA.selector === elB.selector));
 }
 
+function fetchLogoBuffer(domain) {
+  if (!domain) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const url = `https://logo.clearbit.com/${domain}`;
+    const req = https.get(url, { timeout: 5000 }, (res) => {
+      if (res.statusCode !== 200) { resolve(null); return; }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', () => resolve(null));
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
+
+async function runThumbnailPipeline(tutorialId) {
+  const aiService = require('../services/ai-service');
+  const data = await loadTutorials();
+  const tutorials = data.tutorials || [];
+  const tutorialCounter = data.counter ?? 0;
+  const tutorial = tutorials.find(t => t._id === tutorialId);
+  if (!tutorial || !tutorial.steps || tutorial.steps.length === 0) return null;
+  const steps = sortStepsByTimestamp(tutorial.steps);
+  const screenshotsDir = process.env.SCREENSHOTS_PATH || './screenshots';
+  const tutorialDir = path.join(screenshotsDir, tutorialId);
+  await fs.mkdir(tutorialDir, { recursive: true });
+
+  const assets = await aiService.getThumbnailAssets({ steps, title: tutorial.title });
+  tutorial.heroStepIndex = assets.heroIndex;
+  tutorial.thumbnailTitle = assets.condensedTitle;
+
+  const baseBgPath = path.join(tutorialDir, 'base_bg.png');
+  let bgPath = await aiService.generateStudioBackground(assets.brandColor, baseBgPath);
+  if (!bgPath) {
+    try {
+      await sharp({ create: { width: 1280, height: 720, channels: 3, background: assets.brandColor || '#374151' } })
+        .blur(80)
+        .modulate({ brightness: 0.7 })
+        .png()
+        .toFile(baseBgPath);
+    } catch (_) {}
+  }
+
+  const heroStep = steps[assets.heroIndex];
+  const heroPath = heroStep?.screenshot ? path.resolve(heroStep.screenshot) : null;
+  if (!heroPath) return null;
+
+  const { buffer: heroCardBuffer, width: heroCardW, height: heroCardH } = await processHeroCard(heroPath, { brandColorHex: assets.brandColor });
+
+  const brandAssetsDir = path.resolve(process.env.BRAND_ASSETS_PATH || path.join(__dirname, '..', 'brand-assets'));
+  const facePath = path.join(brandAssetsDir, 'face_cutout.png');
+  let faceExists = false;
+  try { await fs.access(facePath); faceExists = true; } catch (_) {}
+  const facePathToUse = faceExists ? facePath : null;
+
+  const originUrl = steps[0]?.clickData?.page?.url;
+  const domain = originUrl ? originUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0] : null;
+  const logoBuf = await fetchLogoBuffer(domain);
+
+  const thumbnailPath = path.join(tutorialDir, 'thumbnail.jpg');
+  await composeThumbnail({
+    baseBgPath: path.join(tutorialDir, 'base_bg.png'),
+    heroCardBuffer,
+    heroCardW,
+    heroCardH,
+    facePath: facePathToUse,
+    logoBuffer: logoBuf,
+    condensedTitle: assets.condensedTitle,
+    outputPath: thumbnailPath
+  });
+
+  tutorial.thumbnail = thumbnailPath;
+  await saveTutorials(tutorials, tutorialCounter);
+  return thumbnailPath;
+}
+
 function sortStepsByTimestamp(steps) {
   if (!steps || steps.length === 0) return steps;
   const actionOrder = { input: 0, click: 1, submit: 2 }; // tie-breaker for very close timestamps
@@ -440,8 +519,13 @@ router.post('/:id/generate-instructions', async (req, res) => {
     });
 
     tutorial.status = tutorial.status === 'recording_complete' ? 'instructions_generated' : tutorial.status;
-    
     await saveTutorials(tutorials, tutorialCounter);
+
+    runThumbnailPipeline(id).then((thumbPath) => {
+      if (thumbPath) console.log(`✅ Thumbnail saved: ${thumbPath}`);
+    }).catch((thumbErr) => {
+      console.warn('Thumbnail pipeline failed:', thumbErr.message);
+    });
 
     console.log(`✅ Generated instructions for ${instructions.length} steps`);
 
@@ -501,6 +585,45 @@ router.put('/:id', async (req, res) => {
       success: false,
       error: error.message
     });
+  }
+});
+
+// Generate or regenerate thumbnail (Final Boss pipeline)
+router.post('/:id/thumbnail', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const thumbPath = await runThumbnailPipeline(id);
+    if (!thumbPath) {
+      return res.status(500).json({ success: false, error: 'Thumbnail generation failed' });
+    }
+    const data = await loadTutorials();
+    const tutorial = (data.tutorials || []).find(t => t._id === id);
+    res.json({ success: true, tutorial: tutorial || null });
+  } catch (error) {
+    console.error('Error generating thumbnail:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Serve thumbnail image
+router.get('/:id/thumbnail', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = await loadTutorials();
+    const tutorials = data.tutorials || [];
+    const tutorial = tutorials.find(t => t._id === id);
+    if (!tutorial) return res.status(404).send('Tutorial not found');
+    const thumbPath = tutorial.thumbnail || path.join(process.env.SCREENSHOTS_PATH || './screenshots', id, 'thumbnail.jpg');
+    const resolved = path.resolve(thumbPath);
+    try {
+      await fs.access(resolved);
+      return res.sendFile(resolved);
+    } catch (_) {
+      return res.status(404).send('Thumbnail not found');
+    }
+  } catch (error) {
+    console.error('Error serving thumbnail:', error);
+    res.status(500).send('Error');
   }
 });
 
