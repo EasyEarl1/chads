@@ -6,6 +6,7 @@ const router = express.Router();
 const Tutorial = require('../models/tutorial');
 const fs = require('fs').promises;
 const path = require('path');
+const sharp = require('sharp');
 
 // File-based storage for persistence
 const STORAGE_FILE = path.join(__dirname, '..', 'data', 'tutorials.json');
@@ -540,6 +541,50 @@ async function saveScreenshot(tutorialId, stepNumber, base64Data) {
   }
 }
 
+/**
+ * Create a smart zoom crop around the element: 16:9, centered on element, with context buffer.
+ * Returns { zoomPath, crop } so the published page can recalc the red box for the cropped image.
+ */
+async function createSmartZoom(fullImagePath, elementRect, viewport, tutorialDir, stepNum) {
+  try {
+    const resolved = path.isAbsolute(fullImagePath) ? fullImagePath : path.resolve(process.cwd(), fullImagePath);
+    const buf = await fs.readFile(resolved);
+    const meta = await sharp(buf).metadata();
+    const imgW = meta.width || viewport.width;
+    const imgH = meta.height || viewport.height;
+    const scaleX = imgW / (viewport.width || 1);
+    const scaleY = imgH / (viewport.height || 1);
+    const elLeft = elementRect.left * scaleX;
+    const elTop = elementRect.top * scaleY;
+    const elW = elementRect.width * scaleX;
+    const elH = elementRect.height * scaleY;
+    const cx = elLeft + elW / 2;
+    const cy = elTop + elH / 2;
+    const buffer = 200;
+    let cropW = Math.max(elW + buffer * 2, elW * 2.5);
+    let cropH = Math.max(elH + buffer * 2, elH * 2.5);
+    if (cropW / cropH > 16 / 9) cropH = cropW * (9 / 16);
+    else cropW = cropH * (16 / 9);
+    let left = Math.round(cx - cropW / 2);
+    let top = Math.round(cy - cropH / 2);
+    left = Math.max(0, Math.min(imgW - cropW, left));
+    top = Math.max(0, Math.min(imgH - cropH, top));
+    const width = Math.round(Math.min(cropW, imgW - left));
+    const height = Math.round(Math.min(cropH, imgH - top));
+    if (width < 20 || height < 20) return null;
+    const zoomFilename = `step_${stepNum}_zoom.png`;
+    const zoomPath = path.join(tutorialDir, zoomFilename);
+    await sharp(buf)
+      .extract({ left, top, width, height })
+      .png()
+      .toFile(zoomPath);
+    return { zoomPath, crop: { left, top, width, height }, imgW, imgH };
+  } catch (err) {
+    console.warn('ClickTut: createSmartZoom failed', err.message);
+    return null;
+  }
+}
+
 // Publish tutorial as Brevo-style help article (HTML page)
 router.post('/:id/publish', async (req, res) => {
   try {
@@ -566,8 +611,22 @@ router.post('/:id/publish', async (req, res) => {
       text: (s.instruction || `Step ${i + 1}`).replace(/<[^>]+>/g, '').substring(0, 80)
     }));
 
-    // Don't show red box for landing steps, non-interactive clicks, or huge containers ("recorder noise")
     const isLandingInstruction = (text) => /^(Start on|Ensure you'?re on|Open the|Open your|Navigate to the)/i.test((text || '').trim());
+
+    const tutorialDir = steps[0]?.screenshot ? path.dirname(path.resolve(steps[0].screenshot)) : null;
+    const zooms = [];
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const stepNum = step.stepNumber || i + 1;
+      const dims = step.clickData?.element?.dimensions;
+      const viewport = step.clickData?.page?.viewport || {};
+      if (tutorialDir && step.screenshot && dims && viewport.width && viewport.height) {
+        const z = await createSmartZoom(step.screenshot, dims, viewport, tutorialDir, stepNum);
+        zooms.push(z);
+      } else {
+        zooms.push(null);
+      }
+    }
 
     const stepSections = steps.map((step, index) => {
       const stepNum = step.stepNumber || index + 1;
@@ -578,6 +637,7 @@ router.post('/:id/publish', async (req, res) => {
       const element = step.clickData?.element || {};
       const dims = element.dimensions || null;
       const viewport = page.viewport || { width: 1, height: 1 };
+      const zoom = zooms[index];
 
       let boxLeft = 10;
       let boxTop = 10;
@@ -585,34 +645,40 @@ router.post('/:id/publish', async (req, res) => {
       let boxH = 8;
       let showHighlight = true;
 
-      // Step 1 with "Start on..." / "Open the..." = landing step; no highlight
       if (index === 0 && isLandingInstruction(rawInstruction)) {
         showHighlight = false;
-      }
-      // Non-interactive only: suppress highlight only for step 1 (avoid noise). For other steps,
-      // show highlight when we have dimensions so clicks like "user icon" (div/svg) still get a box.
-      else if (element.isInteractive === false && index === 0) {
+      } else if (element.isInteractive === false && index === 0) {
         showHighlight = false;
       }
-      if (dims && viewport.width && viewport.height) {
+
+      if (zoom && dims && viewport.width && viewport.height) {
+        const scaleX = zoom.imgW / viewport.width;
+        const scaleY = zoom.imgH / viewport.height;
+        const elLeft = dims.left * scaleX;
+        const elTop = dims.top * scaleY;
+        const elW = dims.width * scaleX;
+        const elH = dims.height * scaleY;
+        const pad = 8;
+        const padX = pad * scaleX;
+        const padY = pad * scaleY;
+        boxLeft = Math.max(0, ((elLeft - zoom.crop.left - padX) / zoom.crop.width) * 100);
+        boxTop = Math.max(0, ((elTop - zoom.crop.top - padY) / zoom.crop.height) * 100);
+        boxW = Math.min(100 - boxLeft, ((elW + padX * 2) / zoom.crop.width) * 100);
+        boxH = Math.min(100 - boxTop, ((elH + padY * 2) / zoom.crop.height) * 100);
+        if (boxW > 55 || boxH > 55) showHighlight = false;
+      } else if (dims && viewport.width && viewport.height) {
         const leftPct = (dims.left / viewport.width) * 100;
         const topPct = (dims.top / viewport.height) * 100;
         const widthPct = (dims.width / viewport.width) * 100;
         const heightPct = (dims.height / viewport.height) * 100;
-
         const padPx = 8;
         const padXPct = (padPx / viewport.width) * 100;
         const padYPct = (padPx / viewport.height) * 100;
-
         boxLeft = Math.max(0, leftPct - padXPct);
         boxTop = Math.max(0, topPct - padYPct);
         boxW = Math.min(100 - boxLeft, widthPct + padXPct * 2);
         boxH = Math.min(100 - boxTop, heightPct + padYPct * 2);
-
-        // Huge box = likely a container; don't highlight (avoids "random large box" on step 9)
-        if (boxW > 55 || boxH > 55) {
-          showHighlight = false;
-        }
+        if (boxW > 55 || boxH > 55) showHighlight = false;
       } else {
         const x = coords.x != null ? coords.x : 0;
         const y = coords.y != null ? coords.y : 0;
@@ -624,11 +690,20 @@ router.post('/:id/publish', async (req, res) => {
         boxTop = Math.max(0, Math.min(100 - boxH, topPct - boxH / 2));
       }
 
-      const screenshotUrl = step.screenshot ? `${apiBase}/screenshots/${stepNum}` : '';
+      const fullScreenshotUrl = step.screenshot ? `${apiBase}/screenshots/${stepNum}` : '';
+      const screenshotUrl = zoom ? `${apiBase}/screenshots/${stepNum}/zoom` : fullScreenshotUrl;
       const pageTitle = page.title ? `<p class="step-page-title">${String(page.title).replace(/<[^>]+>/g, '')}</p>` : '';
       const highlightHtml = showHighlight
         ? `<div class="highlight-box" style="left:${boxLeft}%;top:${boxTop}%;width:${boxW}%;height:${boxH}%;"></div>`
         : '';
+
+      const imgBlock = step.screenshot
+        ? `
+                <img src="${screenshotUrl}" alt="Step ${index + 1}" class="step-screenshot" loading="lazy" data-full-url="${fullScreenshotUrl}" />
+                ${highlightHtml}
+                ${zoom ? `<button type="button" class="view-full-btn" title="View full screenshot" data-full-url="${fullScreenshotUrl}">↗ Full screen</button>` : ''}
+              `
+        : '<div class="no-screenshot">Screenshot not available</div>';
 
       return `
         <section class="step-section" id="step-${index + 1}">
@@ -636,10 +711,7 @@ router.post('/:id/publish', async (req, res) => {
           ${pageTitle}
           <div class="screenshot-wrap">
             <div class="screenshot-container">
-              ${step.screenshot ? `
-                <img src="${screenshotUrl}" alt="Step ${index + 1}" class="step-screenshot" loading="lazy" />
-                ${highlightHtml}
-              ` : '<div class="no-screenshot">Screenshot not available</div>'}
+              ${imgBlock}
             </div>
           </div>
         </section>`;
@@ -680,9 +752,16 @@ router.post('/:id/publish', async (req, res) => {
     .step-badge { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: #4338ca; color: #fff; font-size: 0.85rem; font-weight: 700; flex-shrink: 0; }
     .step-page-title { font-size: 0.85rem; color: #6b7280; margin: 0 0 12px 0; }
     .screenshot-wrap { margin-top: 12px; }
-    .screenshot-container { position: relative; display: inline-block; max-width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb; }
-    .step-screenshot { display: block; max-width: 100%; height: auto; }
+    .screenshot-container { position: relative; display: inline-block; max-width: 100%; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+    .step-screenshot { display: block; max-width: 100%; height: auto; border-radius: 12px; }
     .highlight-box { position: absolute; border: 2px solid #dc2626; border-radius: 4px; pointer-events: none; box-shadow: 0 0 0 2px rgba(220,38,38,0.3); }
+    .view-full-btn { position: absolute; top: 10px; right: 10px; padding: 6px 12px; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.8rem; border: none; cursor: pointer; border-radius: 8px; z-index: 2; }
+    .view-full-btn:hover { background: rgba(0,0,0,0.8); color: #fff; }
+    .screenshot-modal { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.85); align-items: center; justify-content: center; padding: 20px; }
+    .screenshot-modal.open { display: flex; }
+    .screenshot-modal img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+    .screenshot-modal-close { position: absolute; top: 16px; right: 16px; width: 40px; height: 40px; background: rgba(255,255,255,0.2); border: none; border-radius: 50%; color: #fff; font-size: 1.5rem; cursor: pointer; line-height: 1; }
+    .screenshot-modal-close:hover { background: rgba(255,255,255,0.3); }
     .no-screenshot { padding: 40px; background: #f3f4f6; color: #6b7280; text-align: center; border-radius: 8px; }
     @media (max-width: 768px) { .layout { flex-direction: column; } .sidebar { position: relative; height: auto; width: 100%; } }
   </style>
@@ -704,6 +783,10 @@ router.post('/:id/publish', async (req, res) => {
       </article>
     </main>
   </div>
+  <div id="screenshot-modal" class="screenshot-modal" aria-hidden="true">
+    <button type="button" class="screenshot-modal-close" aria-label="Close">&times;</button>
+    <img src="" alt="Full screenshot" />
+  </div>
   <script>
     (function() {
       var links = document.querySelectorAll('.toc-link');
@@ -721,6 +804,29 @@ router.post('/:id/publish', async (req, res) => {
       }
       window.addEventListener('scroll', updateActive);
       updateActive();
+
+      var modal = document.getElementById('screenshot-modal');
+      var modalImg = modal && modal.querySelector('img');
+      var modalClose = modal && modal.querySelector('.screenshot-modal-close');
+      document.querySelectorAll('.view-full-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var url = this.getAttribute('data-full-url');
+          if (modal && modalImg && url) {
+            modalImg.src = url;
+            modal.classList.add('open');
+            modal.setAttribute('aria-hidden', 'false');
+          }
+        });
+      });
+      function closeModal() {
+        if (modal) {
+          modal.classList.remove('open');
+          modal.setAttribute('aria-hidden', 'true');
+          if (modalImg) modalImg.src = '';
+        }
+      }
+      if (modalClose) modalClose.addEventListener('click', closeModal);
+      if (modal) modal.addEventListener('click', function(e) { if (e.target === modal) closeModal(); });
     })();
   </script>
 </body>
@@ -772,6 +878,31 @@ router.get('/:id/screenshots/:stepNumber', async (req, res) => {
     res.sendFile(screenshotPath);
   } catch (error) {
     console.error('Error serving screenshot:', error);
+    res.status(500).send('Error serving screenshot');
+  }
+});
+
+// Serve zoomed screenshot (cropped around element) if available
+router.get('/:id/screenshots/:stepNumber/zoom', async (req, res) => {
+  try {
+    const { id, stepNumber } = req.params;
+    const data = await loadTutorials();
+    tutorials = data.tutorials || [];
+    const tutorial = tutorials.find(t => t._id === id);
+    if (!tutorial) return res.status(404).send('Tutorial not found');
+    const step = tutorial.steps.find(s => (s.stepNumber || 0) === parseInt(stepNumber));
+    if (!step || !step.screenshot) return res.status(404).send('Screenshot not found');
+    const tutorialDir = path.dirname(path.resolve(step.screenshot));
+    const zoomPath = path.resolve(path.join(tutorialDir, `step_${stepNumber}_zoom.png`));
+    try {
+      await fs.access(zoomPath);
+      return res.sendFile(zoomPath);
+    } catch (_) {
+      const fullUrl = `${req.protocol}://${req.get('host')}/api/tutorials/${encodeURIComponent(id)}/screenshots/${stepNumber}`;
+      return res.redirect(302, fullUrl);
+    }
+  } catch (error) {
+    console.error('Error serving zoom screenshot:', error);
     res.status(500).send('Error serving screenshot');
   }
 });

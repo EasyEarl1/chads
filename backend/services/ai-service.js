@@ -155,7 +155,7 @@ class AIService {
       const isFirstStep = stepIndex === 0;
       const prompt = isFirstStep
         ? `This is the FIRST step of a tutorial. Describe in 1-2 sentences: what page or app this is (e.g. "Replicate dashboard", "GitHub home"), and whether the user is simply starting here (e.g. "User is on the dashboard ready to start"). If it looks like a main/dashboard/home page with no specific button clicked yet, say so. Be concise.`
-        : `This image shows the element the user clicked (or a crop around it). In 2-3 short sentences: 1) What is this element (button, icon, link, field)? 2) What does clicking or using it do? (e.g. "copies the API key to clipboard", "opens a menu", "saves the form"). Be concise.`;
+        : `This image shows the element the user clicked (or a crop around it). I have recorded a click on a specific element. If that element is part of a larger logical UI component (like a card, menu item, or dashboard tile), describe the ENTIRE component so the highlight box can frame it (e.g. "The user clicked the 'Abandoned cart' card – the whole white card with border is the target"). In 2-3 short sentences: 1) What is this element or component (button, icon, link, field, card, tile)? 2) What does clicking or using it do? Be concise.`;
       const result = await this.geminiVision.generateContent([prompt, imagePart]);
       const text = result?.response?.text?.();
       return text ? text.trim() : null;
@@ -442,9 +442,14 @@ ${stepsContext.map((ctx, idx) => {
     }
   }
   
-  // For input fields, show what was typed
-  if (actionType === 'input' && element.inputValue && typeof element.inputValue === 'string') {
-    stepInfo += `   Input Value: "${element.inputValue.substring(0, 200)}"\n`;
+  // For input fields, show what was typed (or that it was masked)
+  if (actionType === 'input') {
+    const masked = element.inputValue === '[SENSITIVE DATA MASKED]' || element.inputValue === '[PASSWORD FIELD]' || element.isSensitive;
+    if (masked) {
+      stepInfo += `   Input Value: [SENSITIVE DATA MASKED - do not reveal; use label/placeholder for instruction]\n`;
+    } else if (element.inputValue && typeof element.inputValue === 'string') {
+      stepInfo += `   Input Value: "${element.inputValue.substring(0, 200)}"\n`;
+    }
     if (element.inputType) {
       stepInfo += `   Input Type: ${element.inputType}\n`;
     }
@@ -634,14 +639,18 @@ Generate clear, specific, and actionable instructions for each step. Each instru
    - Use alt text, icon classes, or context to identify the icon (e.g., if classes contain "profile" or "avatar", say "profile picture/avatar")
    - If the element is an image but has text, prioritize describing it as an image/icon, not just the text
    - Examples: "Click your profile picture" (not "Click [Your Name]"), "Click the menu icon" (not "Click ☰")
-3. Use the element's VISIBLE TEXT when available for non-image elements (e.g., "Click the 'Add Product' button" not "Click the button")
-4. For input/typing steps: Describe what to type and where (e.g., "Type 'John Doe' in the Name field" or "Enter your email address in the Email input")
+3. Use the element's VISIBLE TEXT when available for non-image elements (e.g., "Click the 'Add Product' button" not "Click the button"). Never say "Click the div" or "Click the span" - always use the element's label, intent, or visible text (e.g. "Click the user menu", "Click the Save button").
+4. For input/typing steps (actionType INPUT):
+   - If the input value is masked (SENSITIVE DATA MASKED or PASSWORD FIELD): write "Enter your password" or "Enter your [field purpose]" using the field label or placeholder (e.g. "Enter your password in the Password field", "Enter your API key in the API Key field"). Do not reveal or guess the value.
+   - If the value is a specific name or short string: "Enter '[Value]' into the [Field Name] field" (e.g. "Enter 'John Doe' into the Name field").
+   - If the value looks like a long ID, token, or API key: say "Enter your API key" or use the field label/placeholder (e.g. "Enter your API key into the Token field"). Do not repeat the actual value.
+   - Prefer the field label or placeholder for the field name (e.g. "Email", "Token name").
 5. Be specific about location if helpful (e.g., "Click the 'Save' button in the top right")
 6. Describe the action clearly (Click, Select, Type/Enter, Navigate to, Submit, Click [icon type], etc.)
 7. When the action has an obvious result (copy, save, delete, open menu, download), include that result in the instruction (e.g. "Click the copy icon to copy the API key to your clipboard" not just "Click the copy icon"). Use IMAGE ANALYSIS and the preceding steps (e.g. "create token" then an icon = likely copy) to infer the outcome.
 8. Be written in second person ("Click...", "Type...", "Enter...", "Select...")
-9. Be 1-2 sentences maximum
-10. Be friendly and professional
+9. Be 1-2 sentences maximum.
+10. Be friendly and professional.
 11. Consider the flow - if it's part of a sequence, mention context (e.g., "Next, click..." or "Then, type..."). Prefer describing the PURPOSE and RESULT of each step, not just the literal element.
 
 CRITICAL OUTPUT FORMAT:
@@ -671,6 +680,46 @@ IMPORTANT:
     }
 
     return prompt;
+  }
+
+  /**
+   * Generate narrative for published article: title, intro, prerequisites (Brevo-style).
+   */
+  async generatePublishNarrative(tutorial) {
+    if (!this.provider) return { title: tutorial.title || 'Tutorial', intro: '', prerequisites: [] };
+    const steps = tutorial.steps || [];
+    const stepSummary = steps.map((s, i) => `Step ${i + 1}: ${(s.instruction || '').trim() || 'No instruction'}`).join('\n');
+    const firstUrl = steps[0]?.clickData?.page?.url || '';
+    const prompt = `You are writing a short help-article header for a step-by-step tutorial.
+
+Tutorial title (user-provided): "${tutorial.title || 'Untitled'}"
+
+Steps (summary):
+${stepSummary}
+
+First step URL: ${firstUrl}
+
+Reply with ONLY a JSON object (no markdown, no other text) with exactly these keys:
+- "title": A clear, reader-friendly title (e.g. "How to import your contacts to Brevo")
+- "intro": 2-3 sentences explaining what the user will achieve by following the steps
+- "prerequisites": An array of 1-4 short strings (e.g. "A Brevo account", "Your CSV file ready")`;
+
+    try {
+      const out = await this.generateWithReplicate(prompt);
+      const jsonStr = (out || '').replace(/```json?\s*|\s*```/g, '').trim();
+      const match = jsonStr.match(/\{[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        return {
+          title: parsed.title || tutorial.title || 'Tutorial',
+          intro: typeof parsed.intro === 'string' ? parsed.intro : '',
+          prerequisites: Array.isArray(parsed.prerequisites) ? parsed.prerequisites : []
+        };
+      }
+    } catch (e) {
+      console.warn('ClickTut: Publish narrative failed', e.message);
+    }
+    return { title: tutorial.title || 'Tutorial', intro: '', prerequisites: [] };
   }
 
   /**

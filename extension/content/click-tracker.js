@@ -91,54 +91,88 @@
     }
   }, true); // Use capture phase to catch all clicks
 
-  // Track input/typing events
-  let inputTimeout = null;
-  const inputDebounceDelay = 1000; // Wait 1 second after typing stops
-  const inputTimestamps = new WeakMap(); // Store original timestamp per input element
-  
+  // State-based input: buffer one active field; commit on blur, Enter, or 1.5s idle
+  const INPUT_IDLE_MS = 1500;
+  let activeInput = { element: null, startTimestamp: 0, idleTimerId: null };
+
+  function clearInputIdleTimer() {
+    if (activeInput.idleTimerId) {
+      clearTimeout(activeInput.idleTimerId);
+      activeInput.idleTimerId = null;
+    }
+  }
+
+  function commitInputStep(target) {
+    if (!target || !isRecording) return;
+    if (activeInput.element !== target) return;
+    const value = target.value !== undefined ? target.value : (target.textContent || '');
+    if (String(value).trim() === '') return; // Skip empty input (focus then blur without typing)
+    clearInputIdleTimer();
+    const startTimestamp = activeInput.startTimestamp;
+    activeInput.element = null;
+    activeInput.startTimestamp = 0;
+    const syntheticEvent = { timeStamp: 0 };
+    captureInputData(syntheticEvent, target, startTimestamp).then((inputData) => {
+      chrome.runtime.sendMessage({
+        action: 'recordClick',
+        clickData: inputData
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.error('ClickTut: Error sending input data', chrome.runtime.lastError);
+        }
+      });
+    }).catch((err) => {
+      console.error('ClickTut: Error capturing input data', err);
+    });
+  }
+
+  function isInputLike(el) {
+    return el && (['INPUT', 'TEXTAREA'].includes(el.tagName) || el.isContentEditable);
+  }
+
+  document.addEventListener('focusin', (event) => {
+    if (!isRecording) return;
+    const target = event.target;
+    if (!isInputLike(target)) return;
+    if (activeInput.element === target) return;
+    if (activeInput.element) {
+      commitInputStep(activeInput.element);
+    }
+    activeInput.element = target;
+    activeInput.startTimestamp = Date.now();
+    clearInputIdleTimer();
+    activeInput.idleTimerId = setTimeout(() => commitInputStep(target), INPUT_IDLE_MS);
+  }, true);
+
   document.addEventListener('input', (event) => {
     if (!isRecording) return;
-    
     const target = event.target;
-    // Only track input in form fields (input, textarea, contenteditable)
-    if (!['INPUT', 'TEXTAREA'].includes(target.tagName) && !target.isContentEditable) {
-      return;
+    if (!isInputLike(target)) return;
+    if (activeInput.element !== target) {
+      activeInput.element = target;
+      activeInput.startTimestamp = activeInput.startTimestamp || Date.now();
     }
+    clearInputIdleTimer();
+    activeInput.idleTimerId = setTimeout(() => commitInputStep(target), INPUT_IDLE_MS);
+  }, true);
 
-    // Store the original timestamp when input first starts (before debounce)
-    if (!inputTimestamps.has(target)) {
-      inputTimestamps.set(target, Date.now());
+  document.addEventListener('focusout', (event) => {
+    if (!isRecording) return;
+    const target = event.target;
+    if (!isInputLike(target)) return;
+    if (activeInput.element === target) {
+      commitInputStep(target);
     }
+  }, true);
 
-    // Clear previous timeout
-    if (inputTimeout) {
-      clearTimeout(inputTimeout);
+  document.addEventListener('keydown', (event) => {
+    if (!isRecording) return;
+    if (event.key !== 'Enter') return;
+    const target = event.target;
+    if (!isInputLike(target)) return;
+    if (activeInput.element === target) {
+      commitInputStep(target);
     }
-
-    // Debounce: wait for user to stop typing
-    inputTimeout = setTimeout(async () => {
-    try {
-      // Use the original timestamp from when input started, not when debounce fires
-      const originalTimestamp = inputTimestamps.get(target) || Date.now();
-      const inputData = await captureInputData(event, target, originalTimestamp);
-      
-      // Clear the timestamp after capturing
-      inputTimestamps.delete(target);
-        
-        // Send to background script for processing
-        chrome.runtime.sendMessage({
-          action: 'recordClick',
-          clickData: inputData
-        }, (response) => {
-          if (chrome.runtime.lastError) {
-            console.error('ClickTut: Error sending input data', chrome.runtime.lastError);
-          }
-        });
-      } catch (error) {
-        console.error('ClickTut: Error capturing input data', error);
-        inputTimestamps.delete(target);
-      }
-    }, inputDebounceDelay);
   }, true);
 
   // Track form submissions
@@ -161,25 +195,53 @@
     }
   }, true);
 
+  // Snap-to-container: find a card/tile parent so the red box highlights the whole component
+  function findLogicalContainer(element) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const maxW = vw * 0.5;
+    const maxH = vh * 0.5;
+    let bodyBg = 'transparent';
+    try {
+      if (document.body) bodyBg = window.getComputedStyle(document.body).backgroundColor || 'transparent';
+    } catch (_) {}
+    let el = element;
+    for (let level = 0; level < 4 && el && el !== document.body; level++) {
+      el = el.parentElement;
+      if (!el) break;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (rect.width > maxW || rect.height > maxH) continue;
+      try {
+        const s = window.getComputedStyle(el);
+        const border = s.borderWidth || s.borderTopWidth;
+        const borderStyle = s.borderStyle || s.borderTopStyle;
+        const hasBorder = (parseFloat(border) || 0) > 0 && borderStyle && borderStyle !== 'none';
+        const hasShadow = (s.boxShadow || s.webkitBoxShadow || '') !== 'none';
+        const bg = (s.backgroundColor || 'transparent').toLowerCase();
+        const hasBg = bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)' && bg !== bodyBg.toLowerCase();
+        if (hasBorder || hasShadow || hasBg) {
+          return el;
+        }
+      } catch (_) {}
+    }
+    return element;
+  }
+
   // Capture comprehensive click data with extensive context
   // usePreClickScreenshot: for 'click', use screenshot started on mousedown (captures before menu disappears)
   // targetOverride: if set, use this element for dimensions/label (e.g. interactive parent) instead of event.target
   async function captureClickData(event, actionType = 'click', options = {}) {
     const target = options.targetOverride || event.target;
-    // Use event timestamp for more accurate ordering (milliseconds since page load)
-    // Convert to absolute timestamp by adding to page load time
     const eventTimestamp = event.timeStamp || 0;
     const pageLoadTime = performance.timing.navigationStart || Date.now() - performance.now();
     const timestamp = pageLoadTime + eventTimestamp;
-    
-    // Detect if element is an image/icon
+
     const imageContext = detectImageContext(target);
-    
-    // Get surrounding context (sibling elements, parent text, nearby elements)
     const surroundingContext = getSurroundingContext(target);
-    
-    // Get element dimensions and position
-    const rect = target.getBoundingClientRect();
+
+    const container = findLogicalContainer(target);
+    const rect = container.getBoundingClientRect();
     const elementDimensions = {
       width: rect.width,
       height: rect.height,
@@ -272,21 +334,40 @@
     };
   }
 
+  // Detect sensitive fields for privacy (never send real values to backend)
+  function isSensitiveInput(el) {
+    const type = (el.type || '').toLowerCase();
+    if (type === 'password') return true;
+    const name = (el.name || '').toLowerCase();
+    const id = (el.id || '').toLowerCase();
+    const placeholder = (el.placeholder || '').toLowerCase();
+    const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+    const combined = [name, id, placeholder, ariaLabel].join(' ');
+    const sensitivePatterns = ['password', 'passwd', 'pwd', 'credit-card', 'creditcard', 'cvv', 'cvc', 'ssn', 'api-key', 'apikey', 'secret', 'token', 'auth'];
+    return sensitivePatterns.some((p) => combined.includes(p));
+  }
+
   // Capture input/typing data with enhanced context
   async function captureInputData(event, target, originalTimestamp = null) {
     // Use the original timestamp from when input started (before debounce)
-    // This ensures input events are ordered correctly relative to clicks
-    // Use event timestamp for more accurate ordering (same as clicks)
-    const eventTimestamp = event.timeStamp || 0;
     const pageLoadTime = performance.timing.navigationStart || Date.now() - performance.now();
-    const timestamp = originalTimestamp || (pageLoadTime + eventTimestamp);
-    
-    // Get input value (but don't capture sensitive data like passwords)
+    const timestamp = originalTimestamp || (pageLoadTime + (event.timeStamp || 0));
+
+    const rawValue = target.value !== undefined ? target.value : (target.textContent || '');
+    const sensitive = isSensitiveInput(target);
+    const inputValue = sensitive ? '[SENSITIVE DATA MASKED]' : rawValue.substring(0, 200);
     const inputType = target.type || '';
-    const isPassword = inputType === 'password';
-    const inputValue = isPassword ? '[PASSWORD FIELD]' : (target.value || target.textContent || '');
-    
-    // Get element information (incl. selector stack and context sandwich for replay/intent)
+
+    const rect = target.getBoundingClientRect();
+    const dimensions = {
+      width: rect.width,
+      height: rect.height,
+      top: rect.top,
+      left: rect.left,
+      bottom: rect.bottom,
+      right: rect.right
+    };
+
     const elementInfo = {
       tag: target.tagName.toLowerCase(),
       id: target.id || null,
@@ -298,15 +379,15 @@
       attributes: getRelevantAttributes(target),
       actionType: 'input',
       inputType: inputType,
-      inputValue: inputValue.substring(0, 200), // Limit to 200 chars
+      inputValue: inputValue,
       placeholder: target.placeholder || null,
-      label: getInputLabel(target)
+      label: getInputLabel(target),
+      dimensions: dimensions,
+      isSensitive: sensitive
     };
 
-    // Get coordinates (where the input field is)
-    const rect = target.getBoundingClientRect();
     const coordinates = {
-      x: rect.left + (rect.width / 2), // Center of input field
+      x: rect.left + (rect.width / 2),
       y: rect.top + (rect.height / 2),
       pageX: rect.left + window.scrollX + (rect.width / 2),
       pageY: rect.top + window.scrollY + (rect.height / 2)
