@@ -247,7 +247,23 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get a specific tutorial
+// Sort steps by timestamp so display order is chronological (fixes input-after-submit)
+function sortStepsByTimestamp(steps) {
+  if (!steps || steps.length === 0) return steps;
+  const actionOrder = { input: 0, click: 1, submit: 2 }; // tie-breaker: input before submit
+  return [...steps].sort((a, b) => {
+    const tsA = a.timestamp || 0;
+    const tsB = b.timestamp || 0;
+    if (Math.abs(tsA - tsB) < 100) {
+      const typeA = (a.clickData?.element?.actionType || a.clickData?.actionType) || 'click';
+      const typeB = (b.clickData?.element?.actionType || b.clickData?.actionType) || 'click';
+      return (actionOrder[typeA] ?? 1) - (actionOrder[typeB] ?? 1);
+    }
+    return tsA - tsB;
+  });
+}
+
+// Get a specific tutorial (steps returned in chronological order)
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -265,9 +281,15 @@ router.get('/:id', async (req, res) => {
       });
     }
 
+    // Return steps sorted by timestamp so editor shows correct order (e.g. input before submit)
+    const tutorialWithSortedSteps = {
+      ...tutorial,
+      steps: sortStepsByTimestamp(tutorial.steps || [])
+    };
+
     res.json({
       success: true,
-      tutorial: tutorial
+      tutorial: tutorialWithSortedSteps
     });
   } catch (error) {
     console.error('Error getting tutorial:', error);
@@ -324,25 +346,22 @@ router.post('/:id/generate-instructions', async (req, res) => {
       step._originalIndex = index; // Store original position
     });
 
-    // Sort steps by timestamp to ensure correct chronological order
-    // Use timestamp from clickData first, then step timestamp, with fallback
+    // Sort steps by timestamp (same logic as GET so order matches editor)
     const sortedSteps = tutorial.steps.map((step, index) => ({
       ...step,
-      _originalIndex: index, // Preserve original index
-      _sortedIndex: -1 // Will be set after sorting
-    })).sort((a, b) => {
-      // Prioritize clickData.timestamp (most accurate), then step.timestamp
-      const timestampA = a.clickData?.timestamp || a.timestamp || 0;
-      const timestampB = b.clickData?.timestamp || b.timestamp || 0;
-      
-      // If timestamps are equal (or very close), use stepNumber as tiebreaker
-      if (Math.abs(timestampA - timestampB) < 100) { // Within 100ms, consider same time
-        const stepNumA = a.stepNumber || 0;
-        const stepNumB = b.stepNumber || 0;
-        return stepNumA - stepNumB;
+      _originalIndex: index,
+      _sortedIndex: -1
+    }));
+    sortedSteps.sort((a, b) => {
+      const tsA = a.timestamp || 0;
+      const tsB = b.timestamp || 0;
+      if (Math.abs(tsA - tsB) < 100) {
+        const actionOrder = { input: 0, click: 1, submit: 2 };
+        const typeA = (a.clickData?.element?.actionType || a.clickData?.actionType) || 'click';
+        const typeB = (b.clickData?.element?.actionType || b.clickData?.actionType) || 'click';
+        return (actionOrder[typeA] ?? 1) - (actionOrder[typeB] ?? 1);
       }
-      
-      return timestampA - timestampB;
+      return tsA - tsB;
     });
 
     // Set sorted indices

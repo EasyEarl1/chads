@@ -74,10 +74,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Dashboard link
+  // Dashboard link (backend serves on port 3000)
   dashboardLink.addEventListener('click', (e) => {
     e.preventDefault();
-    chrome.tabs.create({ url: 'http://localhost:3001' }); // Adjust port as needed
+    chrome.tabs.create({ url: 'http://localhost:3000/tutorial-editor.html' });
   });
 
   // Update status periodically when recording
