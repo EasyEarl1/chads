@@ -281,6 +281,56 @@ function waitForTabComplete(tabId, maxWaitMs = 500) {
   });
 }
 
+const CAPTURE_SCALE = 2;
+const HIGHRES_TIMEOUT_MS = 2000;
+let debuggerAttachedTabId = null;
+
+async function doCaptureHighRes(tabId) {
+  const debuggee = { tabId };
+  try {
+    if (debuggerAttachedTabId === tabId) {
+      // Already attached from a previous failed cleanup
+      try { await chrome.debugger.detach(debuggee); } catch (_) {}
+      debuggerAttachedTabId = null;
+    }
+
+    await chrome.debugger.attach(debuggee, '1.3');
+    debuggerAttachedTabId = tabId;
+
+    const layoutMetrics = await chrome.debugger.sendCommand(debuggee, 'Page.getLayoutMetrics');
+    const vp = layoutMetrics.cssVisualViewport || layoutMetrics.visualViewport || {};
+    const viewportW = Math.round(vp.clientWidth || 1920);
+    const viewportH = Math.round(vp.clientHeight || 1080);
+
+    await chrome.debugger.sendCommand(debuggee, 'Emulation.setDeviceMetricsOverride', {
+      width: viewportW, height: viewportH,
+      deviceScaleFactor: CAPTURE_SCALE, mobile: false
+    });
+
+    const result = await chrome.debugger.sendCommand(debuggee, 'Page.captureScreenshot', {
+      format: 'png', captureBeyondViewport: false
+    });
+
+    await chrome.debugger.sendCommand(debuggee, 'Emulation.clearDeviceMetricsOverride');
+    await chrome.debugger.detach(debuggee);
+    debuggerAttachedTabId = null;
+
+    if (!result || !result.data) throw new Error('No screenshot data returned');
+    return 'data:image/png;base64,' + result.data;
+  } catch (err) {
+    try { await chrome.debugger.detach(debuggee); } catch (_) {}
+    debuggerAttachedTabId = null;
+    throw err;
+  }
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+  ]);
+}
+
 function doCapture(tabId, windowId) {
   return new Promise((resolve, reject) => {
     const wId = windowId != null ? windowId : null;
@@ -294,6 +344,15 @@ function doCapture(tabId, windowId) {
       }
     });
   });
+}
+
+async function doCaptureWithHighRes(tabId, windowId) {
+  try {
+    return await withTimeout(doCaptureHighRes(tabId), HIGHRES_TIMEOUT_MS);
+  } catch (e) {
+    console.warn('ClickTut: High-res capture skipped:', e.message);
+    return await doCapture(tabId, windowId);
+  }
 }
 
 async function tryCapture(tabId, sendResponse, retryCount = 0) {
