@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How to create and copy an API token on Replicate</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Inter', -apple-system, sans-serif; color: #1a1a1a; line-height: 1.6; background: #f8f9fa; }
+    .layout { display: flex; max-width: 1200px; margin: 0 auto; min-height: 100vh; }
+    .sidebar { width: 260px; flex-shrink: 0; padding: 24px 16px; position: sticky; top: 0; height: 100vh; overflow-y: auto; background: #fff; border-right: 1px solid #e5e7eb; }
+    .sidebar h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin: 0 0 12px 0; }
+    .toc a { display: block; padding: 8px 12px; border-radius: 6px; color: #374151; text-decoration: none; font-size: 0.9rem; }
+    .toc a:hover { background: #f3f4f6; }
+    .toc a.active { background: #eef2ff; color: #4338ca; font-weight: 600; }
+    .main { flex: 1; padding: 40px 48px 80px; }
+    .article { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); padding: 48px 56px; }
+    h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 16px 0; }
+    .intro { font-size: 1.05rem; color: #4b5563; margin: 0 0 24px 0; }
+    .prerequisites { margin: 0 0 32px 0; padding: 20px 24px; background: #f0f9ff; border-radius: 8px; border-left: 4px solid #0ea5e9; }
+    .prerequisites h3 { font-size: 0.95rem; margin: 0 0 8px 0; color: #0c4a6e; }
+    .prerequisites ul { margin: 0; padding-left: 20px; color: #374151; }
+    .step-section { margin: 0 0 40px 0; }
+    .step-section:last-child { margin-bottom: 0; }
+    .step-heading { font-size: 1.15rem; font-weight: 600; margin: 0 0 8px 0; display: flex; align-items: center; gap: 12px; }
+    .step-badge { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: #4338ca; color: #fff; font-size: 0.85rem; font-weight: 700; flex-shrink: 0; }
+    .step-page-title { font-size: 0.85rem; color: #6b7280; margin: 0 0 12px 0; }
+    .screenshot-wrap { margin-top: 12px; }
+    .screenshot-container { position: relative; display: inline-block; max-width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb; }
+    .step-screenshot { display: block; max-width: 100%; height: auto; }
+    .highlight-box { position: absolute; border: 2px solid #dc2626; border-radius: 4px; pointer-events: none; box-shadow: 0 0 0 2px rgba(220,38,38,0.3); }
+    .no-screenshot { padding: 40px; background: #f3f4f6; color: #6b7280; text-align: center; border-radius: 8px; }
+    @media (max-width: 768px) { .layout { flex-direction: column; } .sidebar { position: relative; height: auto; width: 100%; } }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>On this page</h3>
+      <nav class="toc">
+        <a href="#step-1" class="toc-link" data-step="1">1. Start on the Replicate Dashboard.</a><a href="#step-2" class="toc-link" data-step="2">2. Click your user profile button labeled "easyearl1" to open the account menu.</a><a href="#step-3" class="toc-link" data-step="3">3. From the account menu, click "API tokens" to navigate to your API settings.</a><a href="#step-4" class="toc-link" data-step="4">4. Click the "Enter token name" field to define a name for your new API token.</a><a href="#step-5" class="toc-link" data-step="5">5. Type "apitest" into the "Enter token name" field.</a><a href="#step-6" class="toc-link" data-step="6">6. Click the "Create token" button to generate your new API token.</a><a href="#step-7" class="toc-link" data-step="7">7. After creation, your new API token will be displayed on the page.</a><a href="#step-8" class="toc-link" data-step="8">8. Click the copy icon next to your newly created API token to copy it to your clip</a>
+      </nav>
+    </aside>
+    <main class="main">
+      <article class="article">
+        <h1>How to create and copy an API token on Replicate</h1>
+        <p class="intro">This tutorial will guide you through the process of generating a new API token on the Replicate platform. You'll learn how to navigate to your API settings, name your token, create it, and then easily copy it to your clipboard for immediate use.</p>
+        <div class="prerequisites"><h3>Before you start</h3><ul><li>A Replicate account</li><li>Logged into your Replicate account</li></ul></div>
+        
+        <section class="step-section" id="step-1">
+          <h2 class="step-heading"><span class="step-badge">1</span> Start on the Replicate Dashboard.</h2>
+          <p class="step-page-title">Dashboard – Replicate</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772169596652_44/screenshots/1" alt="Step 1" class="step-screenshot" loading="lazy" />
+                <div class="highlight-box" style="left:9.158005953589232%;top:24.565019712343318%;width:81.69905106190691%;height:64.92674272138993%;"></div>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-2">
+          <h2 class="step-heading"><span class="step-badge">2</span> Click your user profile button labeled "easyearl1" to open the account menu.</h2>
+          <p class="step-page-title">Dashboard – Replicate</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772169596652_44/screenshots/2" alt="Step 2" class="step-screenshot" loading="lazy" />
+                <div class="highlight-box" style="left:11.32700799872204%;top:3.113553288218739%;width:6.921223305600077%;height:4.1208791208791204%;"></div>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-3">
+          <h2 class="step-heading"><span class="step-badge">3</span> From the account menu, click "API tokens" to navigate to your API settings.</h2>
+          <p class="step-page-title">Dashboard – Replicate</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772169596652_44/screenshots/3" alt="Step 3" class="step-screenshot" loading="lazy" />
+                <div class="highlight-box" style="left:11.387257117035698%;top:9.661172510503413%;width:12.893508518113846%;height:3.5714285714285716%;"></div>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-4">
+          <h2 class="step-heading"><span class="step-badge">4</span> Click the "Enter token name" field to define a name for your new API token.</h2>
+          <p class="step-page-title">Account settings | Replicate</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772169596652_44/screenshots/4" alt="Step 4" class="step-screenshot" loading="lazy" />
+                <div class="highlight-box" style="left:19.55113813880338%;top:18.315019712343318%;width:29.164784772332524%;height:3.8461538461538463%;"></div>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-5">
+          <h2 class="step-heading"><span class="step-badge">5</span> Type "apitest" into the "Enter token name" field.</h2>
+          <p class="step-page-title">Account settings | Replicate</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772169596652_44/screenshots/7" alt="Step 5" class="step-screenshot" loading="lazy" />
+                <div class="highlight-box" style="left:26.59128018606318%;top:16.238096635420245%;width:14%;height:8%;"></div>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-6">
+          <h2 class="step-heading"><span class="step-badge">6</span> Click the "Create token" button to generate your new API token.</h2>
+          <p class="step-page-title">Account settings | Replicate</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772169596652_44/screenshots/5" alt="Step 6" class="step-screenshot" loading="lazy" />
+                <div class="highlight-box" style="left:48.715922911135905%;top:18.223443922105723%;width:6.262238403816758%;height:4.029304116636842%;"></div>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-7">
+          <h2 class="step-heading"><span class="step-badge">7</span> After creation, your new API token will be displayed on the page.</h2>
+          <p class="step-page-title">Account settings | Replicate</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772169596652_44/screenshots/6" alt="Step 7" class="step-screenshot" loading="lazy" />
+                <div class="highlight-box" style="left:19.55113813880338%;top:18.223443922105723%;width:35.42702214188884%;height:4.029304116636842%;"></div>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-8">
+          <h2 class="step-heading"><span class="step-badge">8</span> Click the copy icon next to your newly created API token to copy it to your clipboard.</h2>
+          <p class="step-page-title">Account settings | Replicate</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772169596652_44/screenshots/8" alt="Step 8" class="step-screenshot" loading="lazy" />
+                <div class="highlight-box" style="left:50.9414086770645%;top:24.13003732869913%;width:1.8075011296882062%;height:2.7472527472527473%;"></div>
+              
+            </div>
+          </div>
+        </section>
+      </article>
+    </main>
+  </div>
+  <script>
+    (function() {
+      var links = document.querySelectorAll('.toc-link');
+      function updateActive() {
+        var sections = document.querySelectorAll('.step-section');
+        var scrollY = window.scrollY;
+        for (var i = sections.length - 1; i >= 0; i--) {
+          if (sections[i].offsetTop - 100 <= scrollY) {
+            links.forEach(function(l) { l.classList.remove('active'); });
+            var a = document.querySelector('.toc-link[data-step="' + (i + 1) + '"]');
+            if (a) a.classList.add('active');
+            break;
+          }
+        }
+      }
+      window.addEventListener('scroll', updateActive);
+      updateActive();
+    })();
+  </script>
+</body>
+</html>

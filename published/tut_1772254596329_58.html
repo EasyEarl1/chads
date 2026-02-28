@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How to Add a Product to Shopify</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Inter', -apple-system, sans-serif; color: #1a1a1a; line-height: 1.6; background: #f8f9fa; }
+    .layout { display: flex; max-width: 1200px; margin: 0 auto; min-height: 100vh; }
+    .sidebar { width: 260px; flex-shrink: 0; padding: 24px 16px; position: sticky; top: 0; height: 100vh; overflow-y: auto; background: #fff; border-right: 1px solid #e5e7eb; }
+    .sidebar h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin: 0 0 12px 0; }
+    .toc a { display: block; padding: 8px 12px; border-radius: 6px; color: #374151; text-decoration: none; font-size: 0.9rem; }
+    .toc a:hover { background: #f3f4f6; }
+    .toc a.active { background: #eef2ff; color: #4338ca; font-weight: 600; }
+    .main { flex: 1; padding: 40px 48px 80px; }
+    .article { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); padding: 48px 56px; }
+    h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 16px 0; }
+    .intro { font-size: 1.05rem; color: #4b5563; margin: 0 0 24px 0; }
+    .prerequisites { margin: 0 0 32px 0; padding: 20px 24px; background: #f0f9ff; border-radius: 8px; border-left: 4px solid #0ea5e9; }
+    .prerequisites h3 { font-size: 0.95rem; margin: 0 0 8px 0; color: #0c4a6e; }
+    .prerequisites ul { margin: 0; padding-left: 20px; color: #374151; }
+    .step-section { margin: 0 0 40px 0; }
+    .step-section:last-child { margin-bottom: 0; }
+    .step-heading { font-size: 1.15rem; font-weight: 600; margin: 0 0 8px 0; display: flex; align-items: center; gap: 12px; }
+    .step-badge { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: #4338ca; color: #fff; font-size: 0.85rem; font-weight: 700; flex-shrink: 0; }
+    .step-page-title { font-size: 0.85rem; color: #6b7280; margin: 0 0 12px 0; }
+    .screenshot-wrap { margin-top: 12px; }
+    .screenshot-container { position: relative; display: inline-block; max-width: 100%; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+    .step-screenshot { display: block; max-width: 100%; height: auto; border-radius: 12px; }
+    .highlight-box { position: absolute; border: 2px solid #dc2626; border-radius: 4px; pointer-events: none; box-shadow: 0 0 0 2px rgba(220,38,38,0.3); }
+    .view-full-btn { position: absolute; top: 10px; right: 10px; padding: 6px 12px; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.8rem; border: none; cursor: pointer; border-radius: 8px; z-index: 2; }
+    .view-full-btn:hover { background: rgba(0,0,0,0.8); color: #fff; }
+    .screenshot-modal { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.85); align-items: center; justify-content: center; padding: 20px; }
+    .screenshot-modal.open { display: flex; }
+    .screenshot-modal img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+    .screenshot-modal-close { position: absolute; top: 16px; right: 16px; width: 40px; height: 40px; background: rgba(255,255,255,0.2); border: none; border-radius: 50%; color: #fff; font-size: 1.5rem; cursor: pointer; line-height: 1; }
+    .screenshot-modal-close:hover { background: rgba(255,255,255,0.3); }
+    .no-screenshot { padding: 40px; background: #f3f4f6; color: #6b7280; text-align: center; border-radius: 8px; }
+    @media (max-width: 768px) { .layout { flex-direction: column; } .sidebar { position: relative; height: auto; width: 100%; } }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>On this page</h3>
+      <nav class="toc">
+        <a href="#step-1" class="toc-link" data-step="1">1. Start on your Shopify admin dashboard to begin adding a new product.</a><a href="#step-2" class="toc-link" data-step="2">2. In the left sidebar, click 'Products' to navigate to your product listings.</a><a href="#step-3" class="toc-link" data-step="3">3. Click the 'Add product' button to open the new product creation form.</a><a href="#step-4" class="toc-link" data-step="4">4. Click the 'Title' field to activate it for input.</a><a href="#step-5" class="toc-link" data-step="5">5. Enter the name of your product into the 'Title' field.</a><a href="#step-6" class="toc-link" data-step="6">6. Review and confirm the product title you have entered.</a><a href="#step-7" class="toc-link" data-step="7">7. Click the 'Save' button to create your new product.</a><a href="#step-8" class="toc-link" data-step="8">8. Your new product has been successfully added, and you are now viewing its detail</a>
+      </nav>
+    </aside>
+    <main class="main">
+      <article class="article">
+        <h1>How to Add a Product to Shopify</h1>
+        <p class="intro">This tutorial will guide you through the simple process of adding a new product to your Shopify store. By following these steps, you'll learn how to quickly create a product entry directly from your admin dashboard.</p>
+        <div class="prerequisites"><h3>Before you start</h3><ul><li>A Shopify account</li><li>Access to your Shopify admin dashboard</li></ul></div>
+        
+        <section class="step-section" id="step-1">
+          <h2 class="step-heading"><span class="step-badge">1</span> Start on your Shopify admin dashboard to begin adding a new product.</h2>
+          <p class="step-page-title">estsetstets · Home · Shopify</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/1/zoom" alt="Step 1" class="step-screenshot" loading="lazy" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/1" />
+                
+                <button type="button" class="view-full-btn" title="View full screenshot" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/1">↗ Full screen</button>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-2">
+          <h2 class="step-heading"><span class="step-badge">2</span> In the left sidebar, click 'Products' to navigate to your product listings.</h2>
+          <p class="step-page-title">estsetstets · Home · Shopify</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/2/zoom" alt="Step 2" class="step-screenshot" loading="lazy" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/2" />
+                <div class="highlight-box" style="left:6.694973862613493%;top:36.19796311103323%;width:12.061413849364621%;height:9.52577928793027%;"></div>
+                <button type="button" class="view-full-btn" title="View full screenshot" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/2">↗ Full screen</button>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-3">
+          <h2 class="step-heading"><span class="step-badge">3</span> Click the 'Add product' button to open the new product creation form.</h2>
+          <p class="step-page-title">estsetstets · Products · Shopify</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/3/zoom" alt="Step 3" class="step-screenshot" loading="lazy" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/3" />
+                <div class="highlight-box" style="left:0%;top:0%;width:2.813583952389468%;height:5.0010341261633915%;"></div>
+                <button type="button" class="view-full-btn" title="View full screenshot" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/3">↗ Full screen</button>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-4">
+          <h2 class="step-heading"><span class="step-badge">4</span> Click the 'Title' field to activate it for input.</h2>
+          <p class="step-page-title">estsetstets · Products · Add product · Shopify</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/4/zoom" alt="Step 4" class="step-screenshot" loading="lazy" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/4" />
+                <div class="highlight-box" style="left:0%;top:0%;width:2.813583952389468%;height:5.0010341261633915%;"></div>
+                <button type="button" class="view-full-btn" title="View full screenshot" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/4">↗ Full screen</button>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-5">
+          <h2 class="step-heading"><span class="step-badge">5</span> Enter the name of your product into the 'Title' field.</h2>
+          <p class="step-page-title">estsetstets · Products · Add product · Shopify</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/5/zoom" alt="Step 5" class="step-screenshot" loading="lazy" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/5" />
+                <div class="highlight-box" style="left:0%;top:0%;width:2.813583952389468%;height:5.0010341261633915%;"></div>
+                <button type="button" class="view-full-btn" title="View full screenshot" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/5">↗ Full screen</button>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-6">
+          <h2 class="step-heading"><span class="step-badge">6</span> Review and confirm the product title you have entered.</h2>
+          <p class="step-page-title">estsetstets · Products · Add product · Shopify</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/6/zoom" alt="Step 6" class="step-screenshot" loading="lazy" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/6" />
+                <div class="highlight-box" style="left:0%;top:0%;width:2.813583952389468%;height:5.0010341261633915%;"></div>
+                <button type="button" class="view-full-btn" title="View full screenshot" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/6">↗ Full screen</button>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-7">
+          <h2 class="step-heading"><span class="step-badge">7</span> Click the 'Save' button to create your new product.</h2>
+          <p class="step-page-title">estsetstets · Products · Add product · Shopify</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/7/zoom" alt="Step 7" class="step-screenshot" loading="lazy" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/7" />
+                <div class="highlight-box" style="left:44.86734860888428%;top:1.7244945262632385%;width:10.35165945743292%;height:12.646293192597083%;"></div>
+                <button type="button" class="view-full-btn" title="View full screenshot" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/7">↗ Full screen</button>
+              
+            </div>
+          </div>
+        </section>
+
+        <section class="step-section" id="step-8">
+          <h2 class="step-heading"><span class="step-badge">8</span> Your new product has been successfully added, and you are now viewing its details page.</h2>
+          <p class="step-page-title">estsetstets · Products · Product Name Here · Shopify</p>
+          <div class="screenshot-wrap">
+            <div class="screenshot-container">
+              
+                <img src="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/8/zoom" alt="Step 8" class="step-screenshot" loading="lazy" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/8" />
+                
+                <button type="button" class="view-full-btn" title="View full screenshot" data-full-url="http://localhost:3000/api/tutorials/tut_1772254596329_58/screenshots/8">↗ Full screen</button>
+              
+            </div>
+          </div>
+        </section>
+      </article>
+    </main>
+  </div>
+  <div id="screenshot-modal" class="screenshot-modal" aria-hidden="true">
+    <button type="button" class="screenshot-modal-close" aria-label="Close">&times;</button>
+    <img src="" alt="Full screenshot" />
+  </div>
+  <script>
+    (function() {
+      var links = document.querySelectorAll('.toc-link');
+      function updateActive() {
+        var sections = document.querySelectorAll('.step-section');
+        var scrollY = window.scrollY;
+        for (var i = sections.length - 1; i >= 0; i--) {
+          if (sections[i].offsetTop - 100 <= scrollY) {
+            links.forEach(function(l) { l.classList.remove('active'); });
+            var a = document.querySelector('.toc-link[data-step="' + (i + 1) + '"]');
+            if (a) a.classList.add('active');
+            break;
+          }
+        }
+      }
+      window.addEventListener('scroll', updateActive);
+      updateActive();
+
+      var modal = document.getElementById('screenshot-modal');
+      var modalImg = modal && modal.querySelector('img');
+      var modalClose = modal && modal.querySelector('.screenshot-modal-close');
+      document.querySelectorAll('.view-full-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var url = this.getAttribute('data-full-url');
+          if (modal && modalImg && url) {
+            modalImg.src = url;
+            modal.classList.add('open');
+            modal.setAttribute('aria-hidden', 'false');
+          }
+        });
+      });
+      function closeModal() {
+        if (modal) {
+          modal.classList.remove('open');
+          modal.setAttribute('aria-hidden', 'true');
+          if (modalImg) modalImg.src = '';
+        }
+      }
+      if (modalClose) modalClose.addEventListener('click', closeModal);
+      if (modal) modal.addEventListener('click', function(e) { if (e.target === modal) closeModal(); });
+    })();
+  </script>
+</body>
+</html>

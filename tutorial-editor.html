@@ -240,6 +240,25 @@
         grid-template-columns: 1fr;
       }
     }
+
+    /* Thumbnail generation */
+    .thumb-section {
+      background: #f0f4ff; border: 2px solid #667eea; border-radius: 10px;
+      padding: 24px; margin: 30px 0;
+    }
+    .thumb-section h3 { color: #667eea; margin-bottom: 16px; font-size: 18px; }
+    .thumb-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+    .thumb-controls select { min-width: 200px; }
+    .thumb-preview-wrap {
+      margin-top: 16px; display: none; text-align: center;
+    }
+    .thumb-preview-wrap.visible { display: block; }
+    .thumb-preview-wrap canvas {
+      max-width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    }
+    .thumb-meta { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: #666; justify-content: center; }
+    .thumb-meta span { background: #e8edf5; padding: 4px 10px; border-radius: 4px; }
+    .thumb-dl-bar { display: flex; gap: 10px; justify-content: center; margin-top: 12px; }
   </style>
 </head>
 <body>
@@ -399,19 +418,6 @@
           </div>
         </div>
 
-        <div class="thumbnail-section" style="margin: 20px 0; padding: 20px; background: #f9fafb; border-radius: 8px;">
-          <div class="section-title">🖼️ Thumbnail</div>
-          <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;">
-            <div>
-              <img id="thumbPreview" src="${API_BASE}/tutorials/${tutorial._id}/thumbnail?t=${Date.now()}" alt="Thumbnail" style="max-width: 320px; height: auto; border-radius: 8px; border: 1px solid #e5e7eb; display: block;" onerror="this.style.display='none'; document.getElementById('thumbPlaceholder').style.display='block';">
-              <div id="thumbPlaceholder" style="display: none; width: 320px; height: 180px; background: #e5e7eb; border-radius: 8px; color: #6b7280; font-size: 14px; padding: 16px; box-sizing: border-box;">No thumbnail. Generate instructions or click Regenerate.</div>
-            </div>
-            <div>
-              <button class="btn" style="background: #7c3aed; color: white;" onclick="regenerateThumbnail('${tutorial._id}')">✨ Regenerate thumbnail</button>
-            </div>
-          </div>
-        </div>
-
         <div class="steps-container">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
             <h2>Steps (${tutorial.steps.length})</h2>
@@ -565,7 +571,27 @@
 
       html += '</div>';
 
+      // Thumbnail generation section
+      html += `
+        <div class="thumb-section" id="thumbSection">
+          <h3>🎨 Generate Thumbnail</h3>
+          <div class="thumb-controls">
+            <select id="presetSelect"><option value="">Loading presets...</option></select>
+            <button class="btn" id="genThumbBtn" style="background:#667eea;color:white;" disabled>Generate Thumbnail</button>
+          </div>
+          <div class="thumb-preview-wrap" id="thumbPreview">
+            <canvas id="thumbCanvas" width="1920" height="1080"></canvas>
+            <div class="thumb-meta" id="thumbMeta"></div>
+            <div class="thumb-dl-bar">
+              <button class="btn" id="thumbDlBtn" style="background:#10b981;color:white;">Download PNG</button>
+              <button class="btn" id="thumbRegenBtn" style="background:#667eea;color:white;">Regenerate (New Variation)</button>
+            </div>
+          </div>
+        </div>
+      `;
+
       content.innerHTML = html;
+      initThumbnailSection(tutorial);
     }
 
     function markChanged() {
@@ -645,21 +671,6 @@
       }
     }
 
-    async function regenerateThumbnail(tutorialId) {
-      try {
-        const r = await fetch(`${API_BASE}/tutorials/${tutorialId}/thumbnail`, { method: 'POST' });
-        const data = await r.json();
-        if (!data.success) throw new Error(data.error || 'Failed');
-        const img = document.getElementById('thumbPreview');
-        if (img) { img.src = `${API_BASE}/tutorials/${tutorialId}/thumbnail?t=${Date.now()}`; img.style.display = 'block'; }
-        document.getElementById('thumbPlaceholder').style.display = 'none';
-        if (data.tutorial) { currentTutorial = data.tutorial; displayTutorial(currentTutorial); }
-        alert('Thumbnail generated.');
-      } catch (e) {
-        alert('Error: ' + e.message);
-      }
-    }
-
     async function generateInstructions(tutorialId) {
       if (!confirm('Generate AI instructions for this tutorial?')) {
         return;
@@ -693,6 +704,312 @@
         const msg = error.message || (error.name === 'TypeError' && error.message.includes('fetch') ? 'Network error. Check the server is running and CORS allows this origin.' : 'Failed to fetch');
         alert('Error: ' + msg);
       }
+    }
+
+    // ── Thumbnail Generation ──
+    async function initThumbnailSection(tutorial) {
+      const select = document.getElementById('presetSelect');
+      const genBtn = document.getElementById('genThumbBtn');
+      const preview = document.getElementById('thumbPreview');
+      const dlBtn = document.getElementById('thumbDlBtn');
+      const regenBtn = document.getElementById('thumbRegenBtn');
+
+      // Load presets into dropdown
+      try {
+        const r = await fetch(API_BASE + '/templates/presets');
+        const d = await r.json();
+        const presets = d.presets || [];
+        if (presets.length === 0) {
+          select.innerHTML = '<option value="">No presets — create one in Thumbnail Designer</option>';
+          return;
+        }
+        select.innerHTML = '<option value="">Select a preset...</option>';
+        presets.forEach(p => {
+          const varCount = (p.variations || []).length;
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = `${p.name} (${varCount} variation${varCount !== 1 ? 's' : ''})`;
+          select.appendChild(opt);
+        });
+        select.addEventListener('change', () => { genBtn.disabled = !select.value; });
+      } catch {
+        select.innerHTML = '<option value="">Failed to load presets</option>';
+        return;
+      }
+
+      genBtn.addEventListener('click', () => generateTutorialThumbnail(tutorial));
+      regenBtn.addEventListener('click', () => generateTutorialThumbnail(tutorial));
+      dlBtn.addEventListener('click', downloadThumbnail);
+    }
+
+    async function generateTutorialThumbnail(tutorial) {
+      const select = document.getElementById('presetSelect');
+      const genBtn = document.getElementById('genThumbBtn');
+      const preview = document.getElementById('thumbPreview');
+      const meta = document.getElementById('thumbMeta');
+      const presetId = select.value;
+      if (!presetId) return;
+
+      genBtn.disabled = true;
+      genBtn.textContent = 'Generating...';
+
+      try {
+        const res = await fetch(API_BASE + '/tutorials/' + tutorial._id + '/generate-thumbnail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ presetId })
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Generation failed');
+
+        const td = data.thumbnailData;
+        meta.innerHTML = `
+          <span>Preset: ${td.presetName}</span>
+          <span>Variation: ${td.variationName}</span>
+          <span>Title: "${td.condensedTitle}"</span>
+          <span>Hero Step: ${td.heroStepIndex + 1}</span>
+        `;
+
+        await renderThumbnailOnCanvas(td);
+        preview.classList.add('visible');
+      } catch (err) {
+        alert('Thumbnail generation failed: ' + err.message);
+      } finally {
+        genBtn.disabled = false;
+        genBtn.textContent = 'Generate Thumbnail';
+      }
+    }
+
+    function loadImg(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Image load failed'));
+        img.src = src;
+      });
+    }
+
+    function roundRectPath(ctx, x, y, w, h, r) {
+      r = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function wrapWords(ctx, text, maxW) {
+      const words = text.split(/\s+/);
+      const lines = []; let line = '';
+      for (const w of words) {
+        const test = line ? line + ' ' + w : w;
+        if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = w; }
+        else line = test;
+      }
+      if (line) lines.push(line);
+      return lines;
+    }
+
+    function fitTextInBox(ctx, text, boxW, boxH, fontFamily) {
+      let lo = 10, hi = 300, best = lo, bestLines = [text];
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        ctx.font = `900 ${mid}px ${fontFamily}`;
+        const lines = wrapWords(ctx, text, boxW);
+        const totalH = lines.length * mid * 1.1;
+        if (totalH <= boxH && lines.every(l => ctx.measureText(l).width <= boxW * 1.02)) {
+          best = mid; bestLines = lines; lo = mid + 1;
+        } else { hi = mid - 1; }
+      }
+      return { fontSize: best, lines: bestLines };
+    }
+
+    async function renderThumbnailOnCanvas(td) {
+      const canvas = document.getElementById('thumbCanvas');
+      const ctx = canvas.getContext('2d');
+      const W = 1920, H = 1080;
+      const t = td.template;
+
+      // Background
+      if (t.bgImage) {
+        try {
+          const bgImg = await loadImg(t.bgImage);
+          const scale = Math.max(W / bgImg.width, H / bgImg.height);
+          const dw = bgImg.width * scale, dh = bgImg.height * scale;
+          ctx.drawImage(bgImg, (W - dw) / 2, (H - dh) / 2, dw, dh);
+        } catch {
+          ctx.fillStyle = t.bgColor1 || '#1a1a2e';
+          ctx.fillRect(0, 0, W, H);
+        }
+      } else {
+        const angle = (t.bgAngle || 135) * Math.PI / 180;
+        const dx = Math.sin(angle), dy = -Math.cos(angle);
+        const halfLen = Math.abs(W * dx / 2) + Math.abs(H * dy / 2);
+        const grad = ctx.createLinearGradient(
+          W/2 - dx * halfLen, H/2 - dy * halfLen,
+          W/2 + dx * halfLen, H/2 + dy * halfLen
+        );
+        grad.addColorStop(0, t.bgColor1 || '#1a1a2e');
+        grad.addColorStop(1, t.bgColor2 || '#16213e');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      const rawElements = t.elements || [];
+      const imgCache = {};
+
+      // Force screenshot visible (it gets its image from the hero step)
+      for (const el of rawElements) {
+        if (el.id === 'screenshot') el.visible = true;
+      }
+
+      // Preload images: for screenshot elements, use the hero screenshot
+      for (const el of rawElements) {
+        if (!el.visible || el.type !== 'image') continue;
+        let src = el.dataUrl || null;
+        if (el.id === 'screenshot' && (td.heroZoomUrl || td.heroScreenshotUrl)) {
+          src = td.heroZoomUrl || td.heroScreenshotUrl;
+        }
+        if (src) {
+          try { imgCache[el.id] = await loadImg(src); } catch {}
+        }
+      }
+
+      // Sort: images first, then stickers, then text on top
+      const zPriority = { image: 0, sticker: 1, text: 2 };
+      const elements = [...rawElements].sort((a, b) => (zPriority[a.type] ?? 0) - (zPriority[b.type] ?? 0));
+
+      const fontFamily = t.font || 'Impact';
+      const text = (td.condensedTitle || 'THUMBNAIL').toUpperCase();
+
+      // Draw elements in z-order
+      for (const el of elements) {
+        if (!el.visible) continue;
+        const ex = (el.l / 100) * W, ey = (el.t / 100) * H;
+        const ew = (el.w / 100) * W, eh = (el.h / 100) * H;
+
+        ctx.save();
+        ctx.globalAlpha = el.opacity ?? 1;
+        if (el.rotation) {
+          ctx.translate(ex + ew / 2, ey + eh / 2);
+          ctx.rotate(el.rotation * Math.PI / 180);
+          ctx.translate(-(ex + ew / 2), -(ey + eh / 2));
+        }
+
+        if (el.type === 'text') {
+          const { fontSize, lines } = fitTextInBox(ctx, text, ew, eh, fontFamily);
+          ctx.font = `900 ${fontSize}px ${fontFamily}`;
+          const lineH = fontSize * 1.1;
+          const totalH = lines.length * lineH;
+          const startY = ey + (eh - totalH) / 2 + fontSize * 0.85;
+          const tAlign = t.textAlign || 'left';
+
+          for (let i = 0; i < lines.length; i++) {
+            const ly = startY + i * lineH;
+            let lx;
+            if (tAlign === 'center') { ctx.textAlign = 'center'; lx = ex + ew / 2; }
+            else if (tAlign === 'right') { ctx.textAlign = 'right'; lx = ex + ew; }
+            else { ctx.textAlign = 'left'; lx = ex; }
+
+            if (el.shadowBlur > 0) {
+              ctx.shadowColor = el.shadowColor || 'rgba(0,0,0,0.5)';
+              ctx.shadowOffsetX = (el.shadowX || 0);
+              ctx.shadowOffsetY = (el.shadowY || 0);
+              ctx.shadowBlur = el.shadowBlur || 0;
+            }
+
+            const sw = t.strokeWidth || 0;
+            if (sw > 0) {
+              ctx.strokeStyle = t.strokeColor || '#000';
+              ctx.lineWidth = sw * 3;
+              ctx.lineJoin = 'round';
+              ctx.strokeText(lines[i], lx, ly);
+            }
+            ctx.fillStyle = t.textColor || '#fff';
+            ctx.fillText(lines[i], lx, ly);
+            ctx.shadowColor = 'transparent';
+          }
+
+        } else if (el.type === 'image' && imgCache[el.id]) {
+          const img = imgCache[el.id];
+          const imgRatio = img.width / img.height;
+          const boxRatio = ew / eh;
+          const useCover = (el.id === 'screenshot');
+          let dw, dh, ddx, ddy;
+          if (useCover) {
+            if (imgRatio > boxRatio) { dh = eh; dw = eh * imgRatio; ddx = (ew - dw) / 2; ddy = 0; }
+            else { dw = ew; dh = ew / imgRatio; ddx = 0; ddy = (eh - dh) / 2; }
+          } else {
+            if (imgRatio > boxRatio) { dw = ew; dh = ew / imgRatio; ddx = 0; ddy = (eh - dh) / 2; }
+            else { dh = eh; dw = eh * imgRatio; ddy = 0; ddx = (ew - dw) / 2; }
+          }
+
+          const radius = (el.borderRadius || 0) * 3;
+          const drawX = useCover ? ex : ex + ddx;
+          const drawY = useCover ? ey : ey + ddy;
+          const drawW = useCover ? ew : dw;
+          const drawH = useCover ? eh : dh;
+
+          const hasShadow = (el.shadowBlur || 0) > 0;
+
+          if (useCover) {
+            // Screenshot: draw filled shape for shadow, then clip image
+            if (hasShadow) {
+              ctx.save();
+              ctx.shadowColor = el.shadowColor || 'rgba(0,0,0,0.5)';
+              ctx.shadowOffsetX = (el.shadowX || 0) * 3;
+              ctx.shadowOffsetY = (el.shadowY || 0) * 3;
+              ctx.shadowBlur = (el.shadowBlur || 0) * 3;
+              roundRectPath(ctx, drawX, drawY, drawW, drawH, radius);
+              ctx.fillStyle = '#000';
+              ctx.fill();
+              ctx.restore();
+            }
+            ctx.save();
+            roundRectPath(ctx, drawX, drawY, drawW, drawH, radius);
+            ctx.clip();
+            ctx.drawImage(img, ex + ddx, ey + ddy, dw, dh);
+            ctx.restore();
+          } else {
+            // Face/logo (transparent PNGs): apply shadow directly on image draw
+            if (hasShadow) {
+              ctx.shadowColor = el.shadowColor || 'rgba(0,0,0,0.5)';
+              ctx.shadowOffsetX = (el.shadowX || 0) * 3;
+              ctx.shadowOffsetY = (el.shadowY || 0) * 3;
+              ctx.shadowBlur = (el.shadowBlur || 0) * 3;
+            }
+            if (radius > 0) {
+              ctx.save();
+              roundRectPath(ctx, drawX, drawY, drawW, drawH, radius);
+              ctx.clip();
+              ctx.drawImage(img, ex + ddx, ey + ddy, dw, dh);
+              ctx.restore();
+            } else {
+              ctx.drawImage(img, ex + ddx, ey + ddy, dw, dh);
+            }
+            ctx.shadowColor = 'transparent';
+          }
+
+        } else if (el.type === 'sticker') {
+          ctx.font = `${Math.min(ew, eh) * 0.8}px serif`;
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(el.emoji || el.label || '', ex + ew / 2, ey + eh / 2);
+        }
+
+        ctx.restore();
+      }
+    }
+
+    function downloadThumbnail() {
+      const canvas = document.getElementById('thumbCanvas');
+      const link = document.createElement('a');
+      const title = currentTutorial?.title || 'thumbnail';
+      link.download = title.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_thumbnail.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
     }
 
     // Auto-load if tutorial ID is in URL

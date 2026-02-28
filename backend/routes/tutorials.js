@@ -8,8 +8,6 @@ const Tutorial = require('../models/tutorial');
 const fs = require('fs').promises;
 const path = require('path');
 const sharp = require('sharp');
-const { processHeroCard, composeThumbnail } = require('../utils/thumbnailCompositor');
-
 // File-based storage for persistence
 const STORAGE_FILE = path.join(__dirname, '..', 'data', 'tutorials.json');
 
@@ -270,83 +268,6 @@ function sameInputField(stepA, stepB) {
   return idA && idB && (idA === idB || (elA?.selector && elB?.selector && elA.selector === elB.selector));
 }
 
-function fetchLogoBuffer(domain) {
-  if (!domain) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const url = `https://logo.clearbit.com/${domain}`;
-    const req = https.get(url, { timeout: 5000 }, (res) => {
-      if (res.statusCode !== 200) { resolve(null); return; }
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-      res.on('error', () => resolve(null));
-    });
-    req.on('error', () => resolve(null));
-    req.on('timeout', () => { req.destroy(); resolve(null); });
-  });
-}
-
-async function runThumbnailPipeline(tutorialId) {
-  const aiService = require('../services/ai-service');
-  const data = await loadTutorials();
-  const tutorials = data.tutorials || [];
-  const tutorialCounter = data.counter ?? 0;
-  const tutorial = tutorials.find(t => t._id === tutorialId);
-  if (!tutorial || !tutorial.steps || tutorial.steps.length === 0) return null;
-  const steps = sortStepsByTimestamp(tutorial.steps);
-  const screenshotsDir = process.env.SCREENSHOTS_PATH || './screenshots';
-  const tutorialDir = path.join(screenshotsDir, tutorialId);
-  await fs.mkdir(tutorialDir, { recursive: true });
-
-  const assets = await aiService.getThumbnailAssets({ steps, title: tutorial.title });
-  tutorial.heroStepIndex = assets.heroIndex;
-  tutorial.thumbnailTitle = assets.condensedTitle;
-
-  const baseBgPath = path.join(tutorialDir, 'base_bg.png');
-  let bgPath = await aiService.generateStudioBackground(assets.brandColor, baseBgPath);
-  if (!bgPath) {
-    try {
-      await sharp({ create: { width: 1280, height: 720, channels: 3, background: assets.brandColor || '#374151' } })
-        .blur(80)
-        .modulate({ brightness: 0.7 })
-        .png()
-        .toFile(baseBgPath);
-    } catch (_) {}
-  }
-
-  const heroStep = steps[assets.heroIndex];
-  const heroPath = heroStep?.screenshot ? path.resolve(heroStep.screenshot) : null;
-  if (!heroPath) return null;
-
-  const { buffer: heroCardBuffer, width: heroCardW, height: heroCardH } = await processHeroCard(heroPath, { brandColorHex: assets.brandColor });
-
-  const brandAssetsDir = path.resolve(process.env.BRAND_ASSETS_PATH || path.join(__dirname, '..', 'brand-assets'));
-  const facePath = path.join(brandAssetsDir, 'face_cutout.png');
-  let faceExists = false;
-  try { await fs.access(facePath); faceExists = true; } catch (_) {}
-  const facePathToUse = faceExists ? facePath : null;
-
-  const originUrl = steps[0]?.clickData?.page?.url;
-  const domain = originUrl ? originUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0] : null;
-  const logoBuf = await fetchLogoBuffer(domain);
-
-  const thumbnailPath = path.join(tutorialDir, 'thumbnail.jpg');
-  await composeThumbnail({
-    baseBgPath: path.join(tutorialDir, 'base_bg.png'),
-    heroCardBuffer,
-    heroCardW,
-    heroCardH,
-    facePath: facePathToUse,
-    logoBuffer: logoBuf,
-    condensedTitle: assets.condensedTitle,
-    outputPath: thumbnailPath
-  });
-
-  tutorial.thumbnail = thumbnailPath;
-  await saveTutorials(tutorials, tutorialCounter);
-  return thumbnailPath;
-}
-
 function sortStepsByTimestamp(steps) {
   if (!steps || steps.length === 0) return steps;
   const actionOrder = { input: 0, click: 1, submit: 2 }; // tie-breaker for very close timestamps
@@ -521,12 +442,6 @@ router.post('/:id/generate-instructions', async (req, res) => {
     tutorial.status = tutorial.status === 'recording_complete' ? 'instructions_generated' : tutorial.status;
     await saveTutorials(tutorials, tutorialCounter);
 
-    runThumbnailPipeline(id).then((thumbPath) => {
-      if (thumbPath) console.log(`✅ Thumbnail saved: ${thumbPath}`);
-    }).catch((thumbErr) => {
-      console.warn('Thumbnail pipeline failed:', thumbErr.message);
-    });
-
     console.log(`✅ Generated instructions for ${instructions.length} steps`);
 
     res.json({
@@ -585,45 +500,6 @@ router.put('/:id', async (req, res) => {
       success: false,
       error: error.message
     });
-  }
-});
-
-// Generate or regenerate thumbnail (Final Boss pipeline)
-router.post('/:id/thumbnail', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const thumbPath = await runThumbnailPipeline(id);
-    if (!thumbPath) {
-      return res.status(500).json({ success: false, error: 'Thumbnail generation failed' });
-    }
-    const data = await loadTutorials();
-    const tutorial = (data.tutorials || []).find(t => t._id === id);
-    res.json({ success: true, tutorial: tutorial || null });
-  } catch (error) {
-    console.error('Error generating thumbnail:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Serve thumbnail image
-router.get('/:id/thumbnail', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const data = await loadTutorials();
-    const tutorials = data.tutorials || [];
-    const tutorial = tutorials.find(t => t._id === id);
-    if (!tutorial) return res.status(404).send('Tutorial not found');
-    const thumbPath = tutorial.thumbnail || path.join(process.env.SCREENSHOTS_PATH || './screenshots', id, 'thumbnail.jpg');
-    const resolved = path.resolve(thumbPath);
-    try {
-      await fs.access(resolved);
-      return res.sendFile(resolved);
-    } catch (_) {
-      return res.status(404).send('Thumbnail not found');
-    }
-  } catch (error) {
-    console.error('Error serving thumbnail:', error);
-    res.status(500).send('Error');
   }
 });
 
@@ -1051,6 +927,210 @@ router.get('/:id/screenshots/:stepNumber/zoom', async (req, res) => {
     res.status(500).send('Error serving screenshot');
   }
 });
+
+// ── Generate thumbnail data for a tutorial using a preset ──
+router.post('/:id/generate-thumbnail', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { presetId } = req.body || {};
+    if (!presetId) return res.status(400).json({ success: false, error: 'presetId required' });
+
+    const data = await loadTutorials();
+    tutorials = data.tutorials || [];
+    const tutorial = tutorials.find(t => t._id === id);
+    if (!tutorial) return res.status(404).json({ success: false, error: 'Tutorial not found' });
+
+    const steps = sortStepsByTimestamp(tutorial.steps || []);
+    if (steps.length === 0) return res.status(400).json({ success: false, error: 'Tutorial has no steps' });
+
+    // Load preset and pick a random variation
+    const PRESETS_FILE = path.join(__dirname, '..', 'data', 'thumbnail-presets.json');
+    let presets = [];
+    try {
+      const pData = await fs.readFile(PRESETS_FILE, 'utf8');
+      presets = JSON.parse(pData);
+      for (const p of presets) {
+        if (p.template && !p.variations) {
+          p.variations = [{ id: 'var_0', name: 'Default', template: p.template }];
+          delete p.template;
+        }
+      }
+    } catch { }
+    const preset = presets.find(p => p.id === presetId);
+    if (!preset || !preset.variations || preset.variations.length === 0) {
+      return res.status(404).json({ success: false, error: 'Preset not found or has no variations' });
+    }
+    const variation = preset.variations[Math.floor(Math.random() * preset.variations.length)];
+
+    // Use AI vision to pick the best screenshot, fall back to heuristics
+    const aiService = require('../services/ai-service');
+    let heroIdx = 0;
+
+    try {
+      console.log('🎯 Using AI to pick best screenshot for thumbnail...');
+      const aiPick = await aiService.pickBestScreenshotForThumbnail(steps, tutorial.title);
+      if (aiPick) {
+        heroIdx = aiPick.stepIndex;
+        console.log(`🎯 AI picked step ${heroIdx + 1}`);
+      } else {
+        heroIdx = pickHeroStepHeuristic(steps);
+        console.log(`🎯 Heuristic fallback picked step ${heroIdx + 1}`);
+      }
+    } catch (e) {
+      console.warn('AI screenshot selection failed, using heuristic:', e.message);
+      heroIdx = pickHeroStepHeuristic(steps);
+    }
+
+    const heroStep = steps[heroIdx];
+    const heroStepNum = heroStep.stepNumber || (heroIdx + 1);
+
+    // Build hero screenshot URL — use the full screenshot for context
+    const baseUrl = req.protocol + '://' + req.get('host');
+    const heroScreenshotUrl = heroStep.screenshot
+      ? `${baseUrl}/api/tutorials/${encodeURIComponent(id)}/screenshots/${heroStepNum}`
+      : null;
+
+    // Smart crop: trim blank edges + attention-based focus on content
+    let heroZoomUrl = null;
+    if (heroStep.screenshot) {
+      const tutorialDir = path.dirname(path.resolve(heroStep.screenshot));
+      try {
+        console.log('🔲 Creating smart crop (trim + attention-focus)...');
+        const cropped = await createSmartCrop(heroStep.screenshot, tutorialDir, heroStepNum);
+        if (cropped) {
+          heroZoomUrl = `${baseUrl}/api/tutorials/${encodeURIComponent(id)}/screenshots/${heroStepNum}/zoom`;
+        }
+      } catch (e) {
+        console.warn('Smart crop failed:', e.message);
+      }
+      if (!heroZoomUrl) {
+        heroZoomUrl = heroScreenshotUrl;
+      }
+    }
+
+    // Condense the title to 3-4 punchy words using AI
+    let condensedTitle = tutorial.title || 'Tutorial';
+    try {
+      condensedTitle = await aiService.condenseTitleForThumbnail(tutorial.title, tutorial.steps);
+    } catch (e) {
+      console.warn('Title condensing failed, using fallback:', e.message);
+      condensedTitle = condenseTitle(tutorial.title);
+    }
+
+    // Save hero step and thumbnail title on the tutorial
+    tutorial.heroStepIndex = heroIdx;
+    tutorial.thumbnailTitle = condensedTitle;
+    await saveTutorials(tutorials, tutorialCounter);
+
+    res.json({
+      success: true,
+      thumbnailData: {
+        template: variation.template,
+        variationName: variation.name,
+        presetName: preset.name,
+        condensedTitle,
+        heroStepIndex: heroIdx,
+        heroScreenshotUrl,
+        heroZoomUrl,
+        tutorialTitle: tutorial.title,
+      }
+    });
+  } catch (error) {
+    console.error('Error generating thumbnail:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Simple fallback title condensing (no AI)
+function condenseTitle(title) {
+  if (!title) return 'TUTORIAL';
+  const words = title.replace(/[^a-zA-Z0-9\s]/g, '').trim().split(/\s+/);
+  const stopWords = new Set(['how', 'to', 'the', 'a', 'an', 'in', 'on', 'for', 'and', 'or', 'of', 'with', 'your', 'my', 'is', 'it']);
+  const meaningful = words.filter(w => !stopWords.has(w.toLowerCase()));
+  const result = (meaningful.length > 0 ? meaningful : words).slice(0, 4).join(' ');
+  return result.toUpperCase();
+}
+
+// Heuristic fallback for hero step selection
+function pickHeroStepHeuristic(steps) {
+  const stepsWithScreenshots = steps
+    .map((s, i) => ({ step: s, idx: i }))
+    .filter(x => x.step.screenshot);
+  if (stepsWithScreenshots.length === 0) return 0;
+
+  const scored = stepsWithScreenshots.map(({ step, idx }) => {
+    let score = 0;
+    const el = step.clickData?.element || {};
+    const frac = idx / steps.length;
+    if (frac > 0.2 && frac < 0.8) score += 3;
+    else if (frac > 0.1 && frac < 0.9) score += 1;
+    if (el.text && el.text.length > 2 && el.text.length < 60) score += 2;
+    if ((el.actionType || 'click') === 'click') score += 1;
+    const tag = (el.tag || '').toLowerCase();
+    if (['button', 'a', 'select'].includes(tag)) score += 2;
+    if (el.dimensions) score += 1;
+    return { idx, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].idx;
+}
+
+/**
+ * Create a 16:9 crop using AI-provided center point and zoom level.
+ */
+async function createSmartCrop(fullImagePath, tutorialDir, stepNum) {
+  try {
+    const resolved = path.isAbsolute(fullImagePath) ? fullImagePath : path.resolve(process.cwd(), fullImagePath);
+    const buf = await fs.readFile(resolved);
+    const meta = await sharp(buf).metadata();
+    const imgW = meta.width;
+    const imgH = meta.height;
+
+    // Step 1: Trim blank/uniform edges to find the content bounds
+    let trimmed = buf;
+    let trimInfo = null;
+    try {
+      const trimResult = sharp(buf).trim({ threshold: 20 });
+      const trimMeta = await trimResult.toBuffer({ resolveWithObject: true });
+      trimInfo = trimMeta.info;
+
+      const trimW = trimInfo.width;
+      const trimH = trimInfo.height;
+      // Only use trimmed version if it preserved a reasonable amount of the image
+      if (trimW > imgW * 0.3 && trimH > imgH * 0.3) {
+        trimmed = trimMeta.data;
+        console.log(`✂️ Trimmed: ${imgW}x${imgH} → ${trimW}x${trimH}`);
+      } else {
+        console.log(`✂️ Trim too aggressive (${trimW}x${trimH}), using original`);
+        trimmed = buf;
+      }
+    } catch (e) {
+      console.log('✂️ Trim skipped:', e.message);
+      trimmed = buf;
+    }
+
+    // Step 2: Smart crop to 16:9 using Sharp's attention-based algorithm
+    // This uses libvips' smartcrop to focus on the most visually interesting area
+    const targetW = 1920;
+    const targetH = 1080;
+
+    const zoomFilename = `step_${stepNum}_zoom.png`;
+    const zoomPath = path.join(tutorialDir, zoomFilename);
+    await sharp(trimmed)
+      .resize(targetW, targetH, {
+        fit: 'cover',
+        position: 'attention'
+      })
+      .png()
+      .toFile(zoomPath);
+
+    console.log(`🔲 Smart crop: ${imgW}x${imgH} → ${targetW}x${targetH} (attention-based)`);
+    return { zoomPath };
+  } catch (err) {
+    console.warn('createSmartCrop failed:', err.message);
+    return null;
+  }
+}
 
 // Helper function to delete tutorial files
 async function deleteTutorialFiles(tutorialId) {
