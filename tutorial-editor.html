@@ -462,6 +462,9 @@
               <button class="btn" style="background: #4338ca; color: white;" onclick="publishTutorial('${tutorial._id}')" title="Generate a help article page">
                 📄 Publish
               </button>
+              <button class="btn" style="background: #374151; color: white;" onclick="exportSteps()">
+                📥 Export Steps
+              </button>
             </div>
           </div>
       `;
@@ -598,6 +601,22 @@
       
       markChanged();
       displayTutorial(currentTutorial);
+    }
+
+    function exportSteps() {
+      if (!currentTutorial) { alert('No tutorial loaded'); return; }
+      const lines = [currentTutorial.title, ''];
+      currentTutorial.steps.forEach((step, i) => {
+        const num = step.stepNumber || i + 1;
+        const instruction = step.instruction || '(no instruction)';
+        lines.push('Step ' + num + ': ' + instruction);
+      });
+      const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+      const link = document.createElement('a');
+      link.download = (currentTutorial.title || 'tutorial').replace(/[^a-z0-9]/gi, '_').toLowerCase() + '_steps.txt';
+      link.href = URL.createObjectURL(blob);
+      link.click();
+      URL.revokeObjectURL(link.href);
     }
 
     function addStep(afterIndex) {

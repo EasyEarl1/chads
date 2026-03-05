@@ -277,22 +277,23 @@ function sameInputField(stepA, stepB) {
 
 function sortStepsByTimestamp(steps) {
   if (!steps || steps.length === 0) return steps;
-  const actionOrder = { input: 0, click: 1, submit: 2 }; // tie-breaker for very close timestamps
-  return [...steps].sort((a, b) => {
+  const actionOrder = { input: 0, click: 1, submit: 2 };
+  const sorted = steps.map(s => ({ ...s })).sort((a, b) => {
     const tsA = a.timestamp || 0;
     const tsB = b.timestamp || 0;
     const typeA = (a.clickData?.element?.actionType || a.clickData?.actionType) || 'click';
     const typeB = (b.clickData?.element?.actionType || b.clickData?.actionType) || 'click';
-    if (Math.abs(tsA - tsB) < 100) {
-      return (actionOrder[typeA] ?? 1) - (actionOrder[typeB] ?? 1);
-    }
-    // Same field: "click to focus" must always come before "type in field"
     if (sameInputField(a, b)) {
       if (typeA === 'click' && typeB === 'input') return -1;
       if (typeA === 'input' && typeB === 'click') return 1;
+      if (Math.abs(tsA - tsB) < 100) {
+        return (actionOrder[typeA] ?? 1) - (actionOrder[typeB] ?? 1);
+      }
     }
     return tsA - tsB;
   });
+  sorted.forEach((step, i) => { step.stepNumber = i + 1; });
+  return sorted;
 }
 
 // Get a specific tutorial (steps returned in chronological order)
