@@ -1263,4 +1263,84 @@ async function deleteTutorialFiles(tutorialId) {
   }
 }
 
+// ── Video Generation ──
+
+router.post('/:id/generate-video', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { mode = 'replay', cookies = null } = req.body || {};
+    const data = await loadTutorials();
+    reloadFromFile(data);
+    const tutorial = tutorials.find(t => t._id === id);
+    if (!tutorial) return res.status(404).json({ success: false, error: 'Tutorial not found' });
+    if (!tutorial.steps || tutorial.steps.length === 0) {
+      return res.status(400).json({ success: false, error: 'Tutorial has no steps' });
+    }
+
+    console.log(`🎬 Video generation requested for ${id} (mode: ${mode}, cookies: ${cookies ? cookies.length + ' provided' : 'none'})`);
+
+    let result;
+
+    if (mode === 'replay') {
+      const replayService = require('../services/replay-video-service');
+      try {
+        result = await replayService.generateReplayVideo(tutorial, { cookies });
+      } catch (replayErr) {
+        console.warn(`🎬 Replay failed, falling back to screenshot mode: ${replayErr.message}`);
+        const videoService = require('../services/video-service');
+        const stepsWithScreenshots = tutorial.steps.filter(s => s.screenshot);
+        if (stepsWithScreenshots.length === 0) {
+          throw new Error('Replay failed and no screenshots available for fallback');
+        }
+        result = await videoService.generateVideo(tutorial);
+        result.mode = 'screenshot';
+        result.replayError = replayErr.message;
+      }
+    } else {
+      const videoService = require('../services/video-service');
+      const stepsWithScreenshots = tutorial.steps.filter(s => s.screenshot);
+      if (stepsWithScreenshots.length === 0) {
+        return res.status(400).json({ success: false, error: 'No screenshots available for video' });
+      }
+      result = await videoService.generateVideo(tutorial);
+      result.mode = 'screenshot';
+    }
+
+    tutorial.videoUrl = result.videoUrl;
+    tutorial.videoPath = result.videoPath;
+    await saveTutorials(tutorials, tutorialCounter);
+
+    res.json({
+      success: true,
+      videoUrl: result.videoUrl,
+      duration: result.duration,
+      fileSize: result.fileSize,
+      mode: result.mode || mode,
+      failedSteps: result.failedSteps,
+      totalSteps: result.totalSteps,
+      replayError: result.replayError
+    });
+  } catch (error) {
+    console.error('Video generation error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/:id/video', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const videoPath = path.resolve(process.cwd(), 'videos', id + '.mp4');
+    try {
+      await fs.access(videoPath);
+    } catch {
+      return res.status(404).json({ success: false, error: 'Video not found. Generate it first.' });
+    }
+    res.setHeader('Content-Type', 'video/mp4');
+    const { createReadStream } = require('fs');
+    createReadStream(videoPath).pipe(res);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 module.exports = router;

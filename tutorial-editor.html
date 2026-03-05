@@ -269,9 +269,107 @@
     }
     .crop-opt-btn:hover { border-color: #667eea; color: #667eea; }
     .crop-opt-btn.active { border-color: #667eea; background: #eef2ff; color: #4338ca; }
+
+    /* Toast notifications */
+    #toast-container {
+      position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+      display: flex; flex-direction: column-reverse; gap: 10px; pointer-events: none;
+    }
+    .toast {
+      pointer-events: auto;
+      display: flex; align-items: center; gap: 10px;
+      min-width: 300px; max-width: 480px;
+      padding: 14px 18px; border-radius: 10px;
+      color: white; font-size: 14px; font-weight: 500;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.18);
+      animation: toastIn 0.35s cubic-bezier(.21,1.02,.73,1);
+      transition: opacity 0.3s, transform 0.3s;
+    }
+    .toast.removing { opacity: 0; transform: translateX(80px); }
+    .toast.success { background: #059669; }
+    .toast.error   { background: #dc2626; }
+    .toast.warning { background: #d97706; }
+    .toast.info    { background: #2563eb; }
+    .toast-msg { flex: 1; }
+    .toast-action {
+      background: rgba(255,255,255,0.25); border: none; color: white;
+      padding: 5px 12px; border-radius: 5px; font-weight: 700; font-size: 13px;
+      cursor: pointer; white-space: nowrap;
+    }
+    .toast-action:hover { background: rgba(255,255,255,0.4); }
+    .toast-close {
+      background: none; border: none; color: rgba(255,255,255,0.7);
+      font-size: 18px; cursor: pointer; padding: 0 2px; line-height: 1;
+    }
+    .toast-close:hover { color: white; }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateX(80px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    /* Confirm modal */
+    .confirm-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+      display: flex; align-items: center; justify-content: center; z-index: 10000;
+      animation: fadeIn 0.15s ease;
+    }
+    .confirm-box {
+      background: white; border-radius: 12px; padding: 28px 32px;
+      max-width: 400px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+      animation: scaleIn 0.2s cubic-bezier(.21,1.02,.73,1);
+    }
+    .confirm-box p { font-size: 15px; color: #333; margin-bottom: 20px; line-height: 1.5; }
+    .confirm-btns { display: flex; gap: 10px; justify-content: flex-end; }
+    .confirm-btns button {
+      padding: 9px 20px; border-radius: 6px; font-size: 14px;
+      font-weight: 600; cursor: pointer; border: none;
+    }
+    .confirm-cancel { background: #e5e7eb; color: #374151; }
+    .confirm-cancel:hover { background: #d1d5db; }
+    .confirm-ok { background: #667eea; color: white; }
+    .confirm-ok:hover { background: #5568d3; }
+    .confirm-danger { background: #ef4444; color: white; }
+    .confirm-danger:hover { background: #dc2626; }
+    @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes scaleIn { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+
+    /* Save indicator */
+    .save-indicator {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; color: #9ca3af; margin-left: 8px; font-weight: 500;
+      transition: color 0.2s;
+    }
+    .save-indicator.unsaved { color: #d97706; }
+    .save-indicator.saving  { color: #667eea; }
+    .save-indicator.saved   { color: #059669; }
+
+    /* Annotation overlay */
+    .annotate-wrapper {
+      position: relative; display: inline-block; width: 100%;
+    }
+    .annotate-canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      cursor: crosshair; border-radius: 6px;
+    }
+    .annotate-toolbar {
+      display: flex; gap: 6px; align-items: center; padding: 8px;
+      background: #1f2937; border-radius: 8px; margin-bottom: 8px;
+    }
+    .annotate-toolbar button {
+      padding: 5px 10px; border-radius: 5px; border: 2px solid transparent;
+      background: #374151; color: #e5e7eb; font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.1s;
+    }
+    .annotate-toolbar button:hover { background: #4b5563; }
+    .annotate-toolbar button.active { border-color: #667eea; background: #4338ca; color: white; }
+    .annotate-toolbar input[type="color"] {
+      width: 28px; height: 28px; border: 2px solid #4b5563; border-radius: 5px;
+      cursor: pointer; padding: 0; background: none;
+    }
   </style>
 </head>
 <body>
+  <div id="toast-container"></div>
   <div class="container">
     <h1>✏️ Edit Tutorial</h1>
     
@@ -280,6 +378,7 @@
       <button class="btn" onclick="loadTutorial()">Load Tutorial</button>
       <button class="btn" onclick="listTutorials()" style="background: #10b981;">List All</button>
       <button class="btn" onclick="saveTutorial()" style="background: #10b981;" id="saveBtn" disabled>Save Changes</button>
+      <span class="save-indicator" id="saveIndicator"></span>
     </div>
 
     <div id="content">
@@ -293,19 +392,83 @@
       : 'http://localhost:3000/api';
     let currentTutorial = null;
     let hasChanges = false;
+    let deletedStepBuffer = null;
+    let undoTimer = null;
 
-    // Auto-save indicator
-    window.addEventListener('beforeunload', (e) => {
-      if (hasChanges) {
-        e.preventDefault();
-        e.returnValue = '';
+    // ── Toast System ──
+    function showToast(message, type = 'info', duration = 4000, action = null) {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      let html = `<span class="toast-msg">${message}</span>`;
+      if (action) {
+        html += `<button class="toast-action" id="toast-action-${Date.now()}">${action.label}</button>`;
       }
+      html += `<button class="toast-close" onclick="dismissToast(this.parentElement)">&times;</button>`;
+      toast.innerHTML = html;
+      container.appendChild(toast);
+      if (action) {
+        toast.querySelector('.toast-action').addEventListener('click', () => {
+          action.fn();
+          dismissToast(toast);
+        });
+      }
+      if (duration > 0) {
+        setTimeout(() => dismissToast(toast), duration);
+      }
+      return toast;
+    }
+    function dismissToast(el) {
+      if (!el || !el.parentElement) return;
+      el.classList.add('removing');
+      setTimeout(() => el.remove(), 300);
+    }
+    function showConfirm(message, danger = false) {
+      return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'confirm-overlay';
+        overlay.innerHTML = `
+          <div class="confirm-box">
+            <p>${message}</p>
+            <div class="confirm-btns">
+              <button class="confirm-cancel">Cancel</button>
+              <button class="${danger ? 'confirm-danger' : 'confirm-ok'}">Confirm</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+        overlay.querySelector('.confirm-cancel').addEventListener('click', () => { overlay.remove(); resolve(false); });
+        overlay.querySelector(danger ? '.confirm-danger' : '.confirm-ok').addEventListener('click', () => { overlay.remove(); resolve(true); });
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); resolve(false); } });
+      });
+    }
+
+    // ── Save indicator ──
+    function updateSaveIndicator(state) {
+      const el = document.getElementById('saveIndicator');
+      if (!el) return;
+      el.className = 'save-indicator ' + state;
+      if (state === 'unsaved') el.textContent = '● Unsaved changes (Ctrl+S)';
+      else if (state === 'saving') el.textContent = '⟳ Saving...';
+      else if (state === 'saved') { el.textContent = '✓ Saved'; setTimeout(() => { if (el.textContent === '✓ Saved') el.textContent = ''; }, 3000); }
+      else el.textContent = '';
+    }
+
+    // Ctrl+S / Cmd+S to save
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        if (hasChanges && currentTutorial) saveTutorial();
+      }
+    });
+
+    window.addEventListener('beforeunload', (e) => {
+      if (hasChanges) { e.preventDefault(); e.returnValue = ''; }
     });
 
     async function loadTutorial() {
       const tutorialId = document.getElementById('tutorialIdInput').value.trim();
       if (!tutorialId) {
-        alert('Please enter a tutorial ID');
+        showToast('Please enter a tutorial ID', 'warning');
         return;
       }
 
@@ -315,14 +478,12 @@
       try {
         const response = await fetch(`${API_BASE}/tutorials/${tutorialId}`);
         const data = await response.json();
-
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to load tutorial');
-        }
+        if (!data.success) throw new Error(data.error || 'Failed to load tutorial');
 
         currentTutorial = data.tutorial;
         hasChanges = false;
         document.getElementById('saveBtn').disabled = true;
+        updateSaveIndicator('');
         displayTutorial(data.tutorial);
       } catch (error) {
         content.innerHTML = `<div class="error">Error: ${error.message}</div>`;
@@ -336,11 +497,7 @@
       try {
         const response = await fetch(`${API_BASE}/tutorials`);
         const data = await response.json();
-
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to load tutorials');
-        }
-
+        if (!data.success) throw new Error(data.error || 'Failed to load tutorials');
         displayTutorialList(data.tutorials);
       } catch (error) {
         content.innerHTML = `<div class="error">Error: ${error.message}</div>`;
@@ -354,7 +511,6 @@
       }
 
       let html = '<h2>All Tutorials</h2><div style="display: grid; gap: 15px; margin-top: 20px;">';
-      
       tutorials.forEach(tut => {
         html += `
           <div class="step" onclick="loadTutorialById('${tut._id}')" style="cursor: pointer;">
@@ -368,10 +524,8 @@
                 <div style="font-size: 12px; color: #666;">${tut.status}</div>
               </div>
             </div>
-          </div>
-        `;
+          </div>`;
       });
-
       html += '</div>';
       document.getElementById('content').innerHTML = html;
     }
@@ -381,23 +535,11 @@
       loadTutorial();
     }
 
-    // Mask sensitive information (usernames, emails, tokens)
-    // BE VERY CONSERVATIVE - only mask actual sensitive data, not common words
     function maskSensitiveData(text) {
       if (!text || typeof text !== 'string') return text;
-      
       let masked = text;
-      
-      // Mask email addresses
       masked = masked.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[EMAIL]');
-      
-      // Mask API tokens (long alphanumeric strings, typically 20+ chars)
       masked = masked.replace(/\b[A-Za-z0-9_-]{20,}\b/g, '[API_TOKEN]');
-      
-      // DO NOT mask usernames in general text - it's too aggressive and breaks instructions
-      // Only mask actual usernames when they appear in specific contexts (profile/account areas)
-      // For now, we'll skip username masking in general text to avoid false positives
-      
       return masked;
     }
 
@@ -409,15 +551,9 @@
         if (actionType === 'submit') return { icon: '📨', text: `Submitted "${display}"` };
         return { icon: '👆', text: `Clicked "${display}"` };
       }
-      if (element.placeholder) {
-        return { icon: '⌨️', text: `Input field: "${element.placeholder}"` };
-      }
-      if (element.label) {
-        return { icon: '🏷️', text: `"${element.label}"` };
-      }
-      if (element.inputType) {
-        return { icon: '⌨️', text: `${element.inputType} input field` };
-      }
+      if (element.placeholder) return { icon: '⌨️', text: `Input field: "${element.placeholder}"` };
+      if (element.label) return { icon: '🏷️', text: `"${element.label}"` };
+      if (element.inputType) return { icon: '⌨️', text: `${element.inputType} input field` };
       if (element.tag) {
         const tagLabel = element.tag === 'a' ? 'link' : element.tag === 'img' ? 'image' : `<${element.tag}>`;
         return { icon: '🔗', text: `Interacted with ${tagLabel} element` };
@@ -465,6 +601,12 @@
               <button class="btn" style="background: #374151; color: white;" onclick="exportSteps()">
                 📥 Export Steps
               </button>
+              <button class="btn" style="background: #7c3aed; color: white;" onclick="generateVideo('${tutorial._id}', 'replay')">
+                🎬 Replay Video
+              </button>
+              <button class="btn" style="background: #6b7280; color: white;" onclick="generateVideo('${tutorial._id}', 'screenshot')">
+                🖼️ Screenshot Video
+              </button>
             </div>
           </div>
       `;
@@ -485,6 +627,7 @@
                 <span class="badge ${actionType}">${actionType}</span>
               </div>
               <div class="step-actions">
+                ${step.screenshot ? `<button class="btn-small" onclick="toggleAnnotate(${index}, ${stepNum})">Annotate</button>` : ''}
                 <button class="btn-small danger" onclick="deleteStep(${index})">Delete</button>
               </div>
             </div>
@@ -503,10 +646,10 @@
                   placeholder="Instruction will be generated...">${maskSensitiveData(step.instruction || '')}</textarea>
               </div>
               
-              <div class="screenshot-container">
+              <div class="screenshot-container" id="screenshot-container-${index}">
                 ${step.screenshot ? 
-                  `<img src="http://localhost:3000/api/tutorials/${tutorial._id}/screenshots/${stepNum}" 
-                        class="screenshot" 
+                  `<img src="${API_BASE.replace('/api','')}/api/tutorials/${tutorial._id}/screenshots/${stepNum}" 
+                        class="screenshot" id="screenshot-img-${index}"
                         alt="Step ${stepNum} screenshot" 
                         onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'no-screenshot\\'>Screenshot not available</div>';">
                    ` :
@@ -550,66 +693,183 @@
     function markChanged() {
       hasChanges = true;
       document.getElementById('saveBtn').disabled = false;
+      updateSaveIndicator('unsaved');
     }
 
     async function saveTutorial() {
-      if (!currentTutorial) {
-        alert('No tutorial loaded');
-        return;
-      }
+      if (!currentTutorial) { showToast('No tutorial loaded', 'warning'); return; }
 
-      // Collect all instruction changes
       const steps = currentTutorial.steps.map((step, index) => {
         const textarea = document.getElementById(`instruction-${index}`);
-        if (textarea) {
-          step.instruction = textarea.value.trim();
-        }
+        if (textarea) step.instruction = textarea.value.trim();
         return step;
       });
-
       currentTutorial.steps = steps;
+      updateSaveIndicator('saving');
 
       try {
-        // Update via API (we'll need to add an update endpoint)
         const response = await fetch(`${API_BASE}/tutorials/${currentTutorial._id}`, {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(currentTutorial)
         });
-
-        if (!response.ok) {
-          throw new Error('Failed to save tutorial');
-        }
+        if (!response.ok) throw new Error('Failed to save tutorial');
 
         hasChanges = false;
         document.getElementById('saveBtn').disabled = true;
-        alert('✅ Tutorial saved successfully!');
+        updateSaveIndicator('saved');
+        showToast('Tutorial saved', 'success', 2500);
       } catch (error) {
-        alert('Error saving: ' + error.message);
+        updateSaveIndicator('unsaved');
+        showToast('Error saving: ' + error.message, 'error');
       }
     }
 
-    async function deleteStep(stepIndex) {
-      if (!confirm(`Delete step ${stepIndex + 1}?`)) return;
-      
-      currentTutorial.steps.splice(stepIndex, 1);
-      currentTutorial.steps.forEach((step, idx) => {
-        step.stepNumber = idx + 1;
+    function requestExtensionCookies(domains) {
+      return new Promise((resolve) => {
+        const requestId = 'cookies_' + Date.now();
+        const timeout = setTimeout(() => {
+          window.removeEventListener('message', handler);
+          resolve(null);
+        }, 5000);
+
+        function handler(event) {
+          if (event.source !== window) return;
+          if (!event.data || event.data.type !== 'CLICKTUT_RESPONSE') return;
+          if (event.data.requestId !== requestId) return;
+          clearTimeout(timeout);
+          window.removeEventListener('message', handler);
+          resolve(event.data.response);
+        }
+
+        window.addEventListener('message', handler);
+        window.postMessage({
+          type: 'CLICKTUT_REQUEST',
+          action: 'captureCookies',
+          requestId,
+          payload: { domains }
+        }, '*');
       });
-      
+    }
+
+    function extractDomainsFromTutorial(tutorial) {
+      const domains = new Set();
+      (tutorial.steps || []).forEach(step => {
+        const url = step.clickData?.page?.url;
+        if (url) {
+          try {
+            const hostname = new URL(url).hostname;
+            domains.add(hostname);
+            const parts = hostname.split('.');
+            if (parts.length > 2) {
+              domains.add(parts.slice(-2).join('.'));
+            }
+          } catch (_) {}
+        }
+      });
+      return [...domains];
+    }
+
+    async function generateVideo(tutorialId, mode = 'replay') {
+      const isReplay = mode === 'replay';
+      const confirmMsg = isReplay
+        ? 'Generate a replay video? A real browser will replay each step live, capturing the real page with all animations.\n\nYour current login cookies will be used so authenticated pages work.\n\nThis may take 30-60 seconds.'
+        : 'Generate a video from screenshots? This composites your captured screenshots with cursor animations.';
+      const confirmed = await showConfirm(confirmMsg);
+      if (!confirmed) return;
+
+      let cookies = null;
+      if (isReplay && currentTutorial) {
+        const domains = extractDomainsFromTutorial(currentTutorial);
+        if (domains.length > 0) {
+          showToast('Capturing auth cookies from your browser...', 'info', 3000);
+          const result = await requestExtensionCookies(domains);
+          if (result && result.success && result.cookies?.length > 0) {
+            cookies = result.cookies;
+            showToast(`Captured ${cookies.length} cookies for ${domains.join(', ')}`, 'success', 3000);
+          } else {
+            showToast('Could not capture cookies. Make sure the ClickTut extension is reloaded (chrome://extensions). The browser will pause for you to log in manually.', 'warning', 8000);
+          }
+        }
+      }
+
+      const modeLabel = isReplay ? 'Replay' : 'Screenshot';
+      const toast = showToast(`🎬 ${modeLabel} video generating... This may take a minute.`, 'info', 0);
+
+      try {
+        const body = { mode };
+        if (cookies) body.cookies = cookies;
+
+        const response = await fetch(`${API_BASE}/tutorials/${tutorialId}/generate-video`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error || 'Video generation failed');
+
+        dismissToast(toast);
+
+        let msg = '';
+        const sizeMB = data.fileSize ? (data.fileSize / 1024 / 1024).toFixed(1) : '?';
+        const dur = data.duration ? data.duration.toFixed(0) + 's' : '';
+
+        if (data.mode === 'replay') {
+          const failed = data.failedSteps?.length || 0;
+          msg = `Replay video generated${dur ? ` (${dur}, ${sizeMB}MB)` : ''}`;
+          if (failed > 0) msg += ` — ${failed} step(s) used fallback`;
+        } else if (data.replayError) {
+          msg = `Replay failed, screenshot fallback used${dur ? ` (${dur}, ${sizeMB}MB)` : ''}`;
+        } else {
+          msg = `Screenshot video generated${dur ? ` (${dur}, ${sizeMB}MB)` : ''}`;
+        }
+
+        showToast(msg, 'success', 8000, {
+          label: 'Download',
+          fn: () => {
+            const link = document.createElement('a');
+            link.href = `${API_BASE}/tutorials/${tutorialId}/video`;
+            link.download = (currentTutorial?.title || 'tutorial').replace(/[^a-z0-9]/gi, '_').toLowerCase() + '.mp4';
+            link.click();
+          }
+        });
+      } catch (error) {
+        dismissToast(toast);
+        showToast('Video error: ' + (error.message || 'Failed'), 'error', 6000);
+      }
+    }
+
+    // ── Undo-able delete ──
+    function deleteStep(stepIndex) {
+      const deleted = currentTutorial.steps.splice(stepIndex, 1)[0];
+      currentTutorial.steps.forEach((step, idx) => { step.stepNumber = idx + 1; });
       markChanged();
       displayTutorial(currentTutorial);
+
+      if (undoTimer) clearTimeout(undoTimer);
+      deletedStepBuffer = { step: deleted, index: stepIndex };
+      showToast(`Step ${stepIndex + 1} deleted`, 'warning', 6000, {
+        label: 'Undo',
+        fn: () => {
+          if (!deletedStepBuffer) return;
+          const { step, index } = deletedStepBuffer;
+          currentTutorial.steps.splice(index, 0, step);
+          currentTutorial.steps.forEach((s, i) => { s.stepNumber = i + 1; });
+          deletedStepBuffer = null;
+          markChanged();
+          displayTutorial(currentTutorial);
+          showToast('Step restored', 'success', 2500);
+        }
+      });
+      undoTimer = setTimeout(() => { deletedStepBuffer = null; }, 6500);
     }
 
     function exportSteps() {
-      if (!currentTutorial) { alert('No tutorial loaded'); return; }
+      if (!currentTutorial) { showToast('No tutorial loaded', 'warning'); return; }
       const lines = [currentTutorial.title, ''];
       currentTutorial.steps.forEach((step, i) => {
         const num = step.stepNumber || i + 1;
-        const instruction = step.instruction || '(no instruction)';
-        lines.push('Step ' + num + ': ' + instruction);
+        lines.push('Step ' + num + ': ' + (step.instruction || '(no instruction)'));
       });
       const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
       const link = document.createElement('a');
@@ -617,6 +877,7 @@
       link.href = URL.createObjectURL(blob);
       link.click();
       URL.revokeObjectURL(link.href);
+      showToast('Steps exported', 'success', 2500);
     }
 
     function addStep(afterIndex) {
@@ -628,11 +889,10 @@
         screenshot: null
       };
       currentTutorial.steps.splice(afterIndex, 0, newStep);
-      currentTutorial.steps.forEach((step, idx) => {
-        step.stepNumber = idx + 1;
-      });
+      currentTutorial.steps.forEach((step, idx) => { step.stepNumber = idx + 1; });
       markChanged();
       displayTutorial(currentTutorial);
+      showToast('Step added', 'info', 2000);
     }
 
     async function publishTutorial(tutorialId) {
@@ -642,23 +902,21 @@
           headers: { 'Content-Type': 'application/json' }
         });
         const data = await response.json();
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to publish tutorial');
-        }
+        if (!data.success) throw new Error(data.error || 'Failed to publish tutorial');
         if (data.url) {
+          showToast('Published successfully', 'success');
           window.open(data.url, '_blank');
         } else {
-          alert('Published, but no URL returned.');
+          showToast('Published, but no URL returned', 'warning');
         }
       } catch (e) {
-        alert('Error publishing: ' + (e.message || e));
+        showToast('Error publishing: ' + (e.message || e), 'error');
       }
     }
 
     async function generateInstructions(tutorialId) {
-      if (!confirm('Generate AI instructions for this tutorial?')) {
-        return;
-      }
+      const confirmed = await showConfirm('Generate AI instructions for all steps? This may take a moment.');
+      if (!confirmed) return;
 
       const content = document.getElementById('content');
       const originalContent = content.innerHTML;
@@ -670,24 +928,189 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ regenerate: true })
         });
-
         let data;
-        try {
-          data = await response.json();
-        } catch (_) {
-          throw new Error(response.ok ? 'Invalid response from server' : 'Failed to fetch. Is the server running at ' + API_BASE.replace('/api', '') + '?');
+        try { data = await response.json(); } catch (_) {
+          throw new Error(response.ok ? 'Invalid response from server' : 'Server not reachable');
         }
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to generate instructions');
-        }
+        if (!data.success) throw new Error(data.error || 'Failed to generate instructions');
 
-        alert('✅ Instructions generated successfully! Thumbnail may still be generating in the background.');
+        showToast('Instructions generated successfully', 'success');
         loadTutorial();
       } catch (error) {
         content.innerHTML = originalContent;
-        const msg = error.message || (error.name === 'TypeError' && error.message.includes('fetch') ? 'Network error. Check the server is running and CORS allows this origin.' : 'Failed to fetch');
-        alert('Error: ' + msg);
+        showToast('Error: ' + (error.message || 'Failed to generate'), 'error', 6000);
       }
+    }
+
+    // ── Screenshot Annotation ──
+    let activeAnnotation = null;
+
+    function toggleAnnotate(stepIndex, stepNum) {
+      if (activeAnnotation && activeAnnotation.stepIndex === stepIndex) {
+        finishAnnotation(stepIndex);
+        return;
+      }
+      if (activeAnnotation) finishAnnotation(activeAnnotation.stepIndex);
+
+      const container = document.getElementById(`screenshot-container-${stepIndex}`);
+      const img = document.getElementById(`screenshot-img-${stepIndex}`);
+      if (!container || !img) return;
+
+      const toolbar = document.createElement('div');
+      toolbar.className = 'annotate-toolbar';
+      toolbar.id = `annotate-toolbar-${stepIndex}`;
+      toolbar.innerHTML = `
+        <button class="active" data-tool="rect">▭ Rectangle</button>
+        <button data-tool="circle">○ Circle</button>
+        <button data-tool="arrow">→ Arrow</button>
+        <input type="color" value="#ef4444" title="Color">
+        <button data-tool="clear" style="margin-left:auto;">Clear</button>
+        <button data-tool="done" style="background:#059669;">Done</button>
+      `;
+      container.parentElement.insertBefore(toolbar, container);
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'annotate-wrapper';
+      wrapper.id = `annotate-wrapper-${stepIndex}`;
+      const canvas = document.createElement('canvas');
+      canvas.className = 'annotate-canvas';
+      canvas.id = `annotate-canvas-${stepIndex}`;
+
+      img.parentElement.insertBefore(wrapper, img);
+      wrapper.appendChild(img);
+      wrapper.appendChild(canvas);
+
+      const rect = img.getBoundingClientRect();
+      canvas.width = img.naturalWidth || rect.width;
+      canvas.height = img.naturalHeight || rect.height;
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = rect.height + 'px';
+
+      const ctx = canvas.getContext('2d');
+      let tool = 'rect';
+      let color = '#ef4444';
+      let drawing = false;
+      let startX, startY;
+      const shapes = [];
+
+      function redraw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (const s of shapes) {
+          ctx.strokeStyle = s.color;
+          ctx.lineWidth = Math.max(3, canvas.width / 300);
+          if (s.type === 'rect') {
+            ctx.strokeRect(s.x, s.y, s.w, s.h);
+          } else if (s.type === 'circle') {
+            ctx.beginPath();
+            const rx = Math.abs(s.w) / 2, ry = Math.abs(s.h) / 2;
+            ctx.ellipse(s.x + s.w / 2, s.y + s.h / 2, rx, ry, 0, 0, Math.PI * 2);
+            ctx.stroke();
+          } else if (s.type === 'arrow') {
+            drawArrow(ctx, s.x, s.y, s.x + s.w, s.y + s.h, s.color);
+          }
+        }
+      }
+
+      function drawArrow(ctx, fx, fy, tx, ty, col) {
+        ctx.strokeStyle = col;
+        ctx.fillStyle = col;
+        ctx.lineWidth = Math.max(3, canvas.width / 300);
+        ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(tx, ty); ctx.stroke();
+        const angle = Math.atan2(ty - fy, tx - fx);
+        const headLen = Math.max(15, canvas.width / 80);
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(tx - headLen * Math.cos(angle - 0.4), ty - headLen * Math.sin(angle - 0.4));
+        ctx.lineTo(tx - headLen * Math.cos(angle + 0.4), ty - headLen * Math.sin(angle + 0.4));
+        ctx.closePath(); ctx.fill();
+      }
+
+      function canvasCoords(e) {
+        const r = canvas.getBoundingClientRect();
+        return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
+      }
+
+      canvas.addEventListener('mousedown', (e) => {
+        drawing = true;
+        const p = canvasCoords(e);
+        startX = p.x; startY = p.y;
+      });
+      canvas.addEventListener('mousemove', (e) => {
+        if (!drawing) return;
+        const p = canvasCoords(e);
+        redraw();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(3, canvas.width / 300);
+        const w = p.x - startX, h = p.y - startY;
+        if (tool === 'rect') ctx.strokeRect(startX, startY, w, h);
+        else if (tool === 'circle') { ctx.beginPath(); ctx.ellipse(startX + w/2, startY + h/2, Math.abs(w)/2, Math.abs(h)/2, 0, 0, Math.PI*2); ctx.stroke(); }
+        else if (tool === 'arrow') drawArrow(ctx, startX, startY, p.x, p.y, color);
+      });
+      canvas.addEventListener('mouseup', (e) => {
+        if (!drawing) return;
+        drawing = false;
+        const p = canvasCoords(e);
+        const w = p.x - startX, h = p.y - startY;
+        if (Math.abs(w) > 5 || Math.abs(h) > 5) {
+          shapes.push({ type: tool, x: startX, y: startY, w, h, color });
+        }
+        redraw();
+      });
+
+      toolbar.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        const t = btn.dataset.tool;
+        if (t === 'clear') { shapes.length = 0; redraw(); return; }
+        if (t === 'done') { finishAnnotation(stepIndex, shapes); return; }
+        if (t) {
+          tool = t;
+          toolbar.querySelectorAll('button[data-tool]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        }
+      });
+      toolbar.querySelector('input[type="color"]').addEventListener('input', (e) => { color = e.target.value; });
+
+      activeAnnotation = { stepIndex, shapes, canvas, img };
+      const stepBtn = container.closest('.step').querySelector('.step-actions .btn-small:not(.danger)');
+      if (stepBtn) stepBtn.textContent = 'Done';
+    }
+
+    function finishAnnotation(stepIndex, shapes) {
+      const toolbar = document.getElementById(`annotate-toolbar-${stepIndex}`);
+      const wrapper = document.getElementById(`annotate-wrapper-${stepIndex}`);
+      const canvas = document.getElementById(`annotate-canvas-${stepIndex}`);
+      const img = document.getElementById(`screenshot-img-${stepIndex}`);
+
+      if (shapes && shapes.length > 0 && canvas && img) {
+        const merged = document.createElement('canvas');
+        merged.width = canvas.width;
+        merged.height = canvas.height;
+        const mCtx = merged.getContext('2d');
+        mCtx.drawImage(img, 0, 0, merged.width, merged.height);
+        mCtx.drawImage(canvas, 0, 0);
+        img.src = merged.toDataURL('image/png');
+        if (currentTutorial && currentTutorial.steps[stepIndex]) {
+          currentTutorial.steps[stepIndex]._annotatedDataUrl = merged.toDataURL('image/png');
+          markChanged();
+        }
+        showToast('Annotations applied', 'success', 2500);
+      }
+
+      if (toolbar) toolbar.remove();
+      if (wrapper && img) {
+        const container = wrapper.parentElement;
+        container.insertBefore(img, wrapper);
+        wrapper.remove();
+      }
+      if (canvas) canvas.remove();
+
+      const stepEl = document.querySelector(`[data-step-index="${stepIndex}"]`);
+      if (stepEl) {
+        const btn = stepEl.querySelector('.step-actions .btn-small:not(.danger)');
+        if (btn) btn.textContent = 'Annotate';
+      }
+      if (activeAnnotation && activeAnnotation.stepIndex === stepIndex) activeAnnotation = null;
     }
 
     // ── Thumbnail Generation ──
@@ -784,7 +1207,7 @@
         await renderThumbnailOnCanvas(td);
         preview.classList.add('visible');
       } catch (err) {
-        alert('Thumbnail generation failed: ' + err.message);
+        showToast('Thumbnail generation failed: ' + err.message, 'error');
       } finally {
         genBtn.disabled = false;
         genBtn.textContent = 'Generate Thumbnail';

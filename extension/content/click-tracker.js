@@ -853,6 +853,34 @@
     // Could add visual indicator on page
   }
 
+  // Relay messages from the page (tutorial editor) to the extension service worker
+  window.addEventListener('message', async (event) => {
+    if (event.source !== window) return;
+    if (!event.data || event.data.type !== 'CLICKTUT_REQUEST') return;
+
+    const { action, payload, requestId } = event.data;
+
+    if (action === 'captureCookies') {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          action: 'captureCookies',
+          domains: payload.domains
+        });
+        window.postMessage({
+          type: 'CLICKTUT_RESPONSE',
+          requestId,
+          response
+        }, '*');
+      } catch (err) {
+        window.postMessage({
+          type: 'CLICKTUT_RESPONSE',
+          requestId,
+          response: { success: false, error: err.message }
+        }, '*');
+      }
+    }
+  });
+
   console.log('ClickTut: Content script loaded');
 })();
 

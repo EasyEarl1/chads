@@ -47,6 +47,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === 'captureScreenshot') {
     handleCaptureScreenshot(sender.tab.id, sendResponse);
     return true;
+  } else if (request.action === 'captureCookies') {
+    handleCaptureCookies(request.domains, sendResponse);
+    return true;
   }
   return false;
 });
@@ -393,6 +396,49 @@ async function tryCapture(tabId, sendResponse, retryCount = 0) {
 
 async function handleCaptureScreenshot(tabId, sendResponse) {
   tryCapture(tabId, sendResponse, 0);
+}
+
+// Capture cookies for given domains (used for replay video auth)
+async function handleCaptureCookies(domains, sendResponse) {
+  try {
+    if (!domains || !Array.isArray(domains) || domains.length === 0) {
+      sendResponse({ success: false, error: 'No domains provided' });
+      return;
+    }
+
+    const allCookies = [];
+    const seen = new Set();
+
+    for (const domain of domains) {
+      try {
+        const cookies = await chrome.cookies.getAll({ domain });
+        for (const c of cookies) {
+          const key = `${c.domain}|${c.name}|${c.path}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            allCookies.push({
+              name: c.name,
+              value: c.value,
+              domain: c.domain,
+              path: c.path,
+              secure: c.secure,
+              httpOnly: c.httpOnly,
+              sameSite: c.sameSite,
+              expires: c.expirationDate || -1
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`ClickTut: Failed to get cookies for ${domain}:`, err);
+      }
+    }
+
+    console.log(`ClickTut: Captured ${allCookies.length} cookies for ${domains.length} domain(s)`);
+    sendResponse({ success: true, cookies: allCookies });
+  } catch (error) {
+    console.error('ClickTut: Error capturing cookies:', error);
+    sendResponse({ success: false, error: error.message });
+  }
 }
 
 // Handle extension installation
