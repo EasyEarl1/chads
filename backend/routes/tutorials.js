@@ -38,6 +38,14 @@ async function saveTutorials(tutorials, counter) {
   }
 }
 
+function reloadFromFile(data) {
+  const loaded = data.tutorials || [];
+  if (loaded.length > 0 || tutorials.length === 0) {
+    tutorials = loaded;
+    tutorialCounter = data.counter || tutorialCounter;
+  }
+}
+
 // Initialize storage
 let tutorials = [];
 let tutorialCounter = 0;
@@ -222,10 +230,9 @@ router.post('/:id/stop', async (req, res) => {
 // Get all tutorials
 router.get('/', async (req, res) => {
   try {
-    // Reload from file to ensure we have latest
     const data = await loadTutorials();
-    tutorials = data.tutorials || [];
-    
+    reloadFromFile(data);
+
     // Return simplified list
     const tutorialList = tutorials.map(t => ({
       _id: t._id,
@@ -295,7 +302,7 @@ router.get('/:id', async (req, res) => {
 
     // Reload from file
     const data = await loadTutorials();
-    tutorials = data.tutorials || [];
+    reloadFromFile(data);
     
     const tutorial = tutorials.find(t => t._id === id);
     
@@ -333,7 +340,7 @@ router.post('/:id/generate-instructions', async (req, res) => {
 
     // Reload from file
     const data = await loadTutorials();
-    tutorials = data.tutorials || [];
+    reloadFromFile(data);
     
     const tutorial = tutorials.find(t => t._id === id);
     
@@ -466,7 +473,7 @@ router.put('/:id', async (req, res) => {
 
     // Reload from file
     const data = await loadTutorials();
-    tutorials = data.tutorials || [];
+    reloadFromFile(data);
     
     const tutorial = tutorials.find(t => t._id === id);
     
@@ -611,7 +618,7 @@ router.post('/:id/publish', async (req, res) => {
   try {
     const { id } = req.params;
     const data = await loadTutorials();
-    tutorials = data.tutorials || [];
+    reloadFromFile(data);
     const tutorial = tutorials.find(t => t._id === id);
     if (!tutorial) {
       return res.status(404).json({ success: false, error: 'Tutorial not found' });
@@ -874,7 +881,7 @@ router.get('/:id/screenshots/:stepNumber', async (req, res) => {
     const { id, stepNumber } = req.params;
     
     const data = await loadTutorials();
-    tutorials = data.tutorials || [];
+    reloadFromFile(data);
     
     const tutorial = tutorials.find(t => t._id === id);
     if (!tutorial) {
@@ -903,12 +910,39 @@ router.get('/:id/screenshots/:stepNumber', async (req, res) => {
   }
 });
 
+// Serve a named crop variant
+router.get('/:id/screenshots/:stepNumber/crop/:variant', async (req, res) => {
+  try {
+    const { id, stepNumber, variant } = req.params;
+    const allowed = ['element', 'attention'];
+    if (!allowed.includes(variant)) return res.status(400).send('Invalid variant');
+    const data = await loadTutorials();
+    reloadFromFile(data);
+    const tutorial = tutorials.find(t => t._id === id);
+    if (!tutorial) return res.status(404).send('Tutorial not found');
+    const step = tutorial.steps.find(s => (s.stepNumber || 0) === parseInt(stepNumber));
+    if (!step || !step.screenshot) return res.status(404).send('Screenshot not found');
+    const tutorialDir = path.dirname(path.resolve(step.screenshot));
+    const cropPath = path.resolve(path.join(tutorialDir, `step_${stepNumber}_${variant}.png`));
+    try {
+      await fs.access(cropPath);
+      return res.sendFile(cropPath);
+    } catch (_) {
+      const fullUrl = `${req.protocol}://${req.get('host')}/api/tutorials/${encodeURIComponent(id)}/screenshots/${stepNumber}`;
+      return res.redirect(302, fullUrl);
+    }
+  } catch (error) {
+    console.error('Error serving crop variant:', error);
+    res.status(500).send('Error serving screenshot');
+  }
+});
+
 // Serve zoomed screenshot (cropped around element) if available
 router.get('/:id/screenshots/:stepNumber/zoom', async (req, res) => {
   try {
     const { id, stepNumber } = req.params;
     const data = await loadTutorials();
-    tutorials = data.tutorials || [];
+    reloadFromFile(data);
     const tutorial = tutorials.find(t => t._id === id);
     if (!tutorial) return res.status(404).send('Tutorial not found');
     const step = tutorial.steps.find(s => (s.stepNumber || 0) === parseInt(stepNumber));
@@ -936,7 +970,7 @@ router.post('/:id/generate-thumbnail', async (req, res) => {
     if (!presetId) return res.status(400).json({ success: false, error: 'presetId required' });
 
     const data = await loadTutorials();
-    tutorials = data.tutorials || [];
+    reloadFromFile(data);
     const tutorial = tutorials.find(t => t._id === id);
     if (!tutorial) return res.status(404).json({ success: false, error: 'Tutorial not found' });
 
@@ -990,22 +1024,43 @@ router.post('/:id/generate-thumbnail', async (req, res) => {
       ? `${baseUrl}/api/tutorials/${encodeURIComponent(id)}/screenshots/${heroStepNum}`
       : null;
 
-    // Smart crop: trim blank edges + attention-based focus on content
+    // Generate multiple crop variants so the user can pick the best one
+    const cropOptions = [];
     let heroZoomUrl = null;
     if (heroStep.screenshot) {
       const tutorialDir = path.dirname(path.resolve(heroStep.screenshot));
+      const clickData = heroStep.clickData;
+      const elementRect = clickData?.element?.dimensions;
+      const viewport = clickData?.page?.viewport;
+      const screenshotBase = `${baseUrl}/api/tutorials/${encodeURIComponent(id)}/screenshots/${heroStepNum}`;
+
+      // Option 1: Element-based tight crop
+      if (elementRect && viewport && elementRect.width > 0) {
+        try {
+          console.log('🔲 Generating crop option: element-zoom...');
+          const cropped = await createThumbnailZoom(heroStep.screenshot, elementRect, viewport, tutorialDir, heroStepNum, 'element');
+          if (cropped) {
+            cropOptions.push({ id: 'element', label: 'Element Focus', url: `${screenshotBase}/crop/element` });
+          }
+        } catch (e) { console.warn('Element crop failed:', e.message); }
+      }
+
+      // Option 2: Attention-based smart crop
       try {
-        console.log('🔲 Creating smart crop (trim + attention-focus)...');
-        const cropped = await createSmartCrop(heroStep.screenshot, tutorialDir, heroStepNum);
+        console.log('🔲 Generating crop option: attention...');
+        const cropped = await createSmartCrop(heroStep.screenshot, tutorialDir, heroStepNum, 'attention');
         if (cropped) {
-          heroZoomUrl = `${baseUrl}/api/tutorials/${encodeURIComponent(id)}/screenshots/${heroStepNum}/zoom`;
+          cropOptions.push({ id: 'attention', label: 'Smart Focus', url: `${screenshotBase}/crop/attention` });
         }
-      } catch (e) {
-        console.warn('Smart crop failed:', e.message);
+      } catch (e) { console.warn('Attention crop failed:', e.message); }
+
+      // Option 3: Full screenshot (no crop)
+      if (heroScreenshotUrl) {
+        cropOptions.push({ id: 'full', label: 'Full Screenshot', url: heroScreenshotUrl });
       }
-      if (!heroZoomUrl) {
-        heroZoomUrl = heroScreenshotUrl;
-      }
+
+      // Default to first available option
+      heroZoomUrl = cropOptions.length > 0 ? cropOptions[0].url : heroScreenshotUrl;
     }
 
     // Condense the title to 3-4 punchy words using AI
@@ -1032,6 +1087,7 @@ router.post('/:id/generate-thumbnail', async (req, res) => {
         heroStepIndex: heroIdx,
         heroScreenshotUrl,
         heroZoomUrl,
+        cropOptions,
         tutorialTitle: tutorial.title,
       }
     });
@@ -1076,9 +1132,67 @@ function pickHeroStepHeuristic(steps) {
 }
 
 /**
- * Create a 16:9 crop using AI-provided center point and zoom level.
+ * Thumbnail-specific zoom: centers on the clicked element with tighter framing.
+ * Uses the element's bounding rect to ensure the key UI area fills the crop.
  */
-async function createSmartCrop(fullImagePath, tutorialDir, stepNum) {
+async function createThumbnailZoom(fullImagePath, elementRect, viewport, tutorialDir, stepNum, suffix = 'element') {
+  try {
+    const resolved = path.isAbsolute(fullImagePath) ? fullImagePath : path.resolve(process.cwd(), fullImagePath);
+    const buf = await fs.readFile(resolved);
+    const meta = await sharp(buf).metadata();
+    const imgW = meta.width;
+    const imgH = meta.height;
+    const scaleX = imgW / (viewport.width || 1);
+    const scaleY = imgH / (viewport.height || 1);
+
+    const elLeft = elementRect.left * scaleX;
+    const elTop = elementRect.top * scaleY;
+    const elW = elementRect.width * scaleX;
+    const elH = elementRect.height * scaleY;
+    const cx = elLeft + elW / 2;
+    const cy = elTop + elH / 2;
+
+    const contextMultiplier = 1.8;
+    let cropW = Math.max(elW * contextMultiplier, 400);
+    let cropH = Math.max(elH * contextMultiplier, 225);
+
+    if (cropW / cropH > 16 / 9) cropH = cropW * (9 / 16);
+    else cropW = cropH * (16 / 9);
+
+    cropW = Math.min(cropW, imgW);
+    cropH = Math.min(cropH, imgH);
+    if (cropW / cropH > 16 / 9) cropH = cropW * (9 / 16);
+    else cropW = cropH * (16 / 9);
+
+    let left = Math.round(cx - cropW / 2);
+    let top = Math.round(cy - cropH / 2);
+    left = Math.max(0, Math.min(Math.round(imgW - cropW), left));
+    top = Math.max(0, Math.min(Math.round(imgH - cropH), top));
+    const width = Math.round(Math.min(cropW, imgW - left));
+    const height = Math.round(Math.min(cropH, imgH - top));
+
+    if (width < 50 || height < 50) return null;
+
+    const zoomFilename = `step_${stepNum}_${suffix}.png`;
+    const zoomPath = path.join(tutorialDir, zoomFilename);
+    await sharp(buf)
+      .extract({ left, top, width, height })
+      .resize(1920, 1080, { fit: 'fill' })
+      .png()
+      .toFile(zoomPath);
+
+    console.log(`🔲 Thumbnail zoom [${suffix}]: element (${Math.round(elLeft)},${Math.round(elTop)} ${Math.round(elW)}x${Math.round(elH)}) → crop ${width}x${height}`);
+    return { zoomPath };
+  } catch (err) {
+    console.warn(`createThumbnailZoom [${suffix}] failed:`, err.message);
+    return null;
+  }
+}
+
+/**
+ * Fallback: attention-based smart crop when element bounds aren't available.
+ */
+async function createSmartCrop(fullImagePath, tutorialDir, stepNum, suffix = 'zoom') {
   try {
     const resolved = path.isAbsolute(fullImagePath) ? fullImagePath : path.resolve(process.cwd(), fullImagePath);
     const buf = await fs.readFile(resolved);
@@ -1114,7 +1228,7 @@ async function createSmartCrop(fullImagePath, tutorialDir, stepNum) {
     const targetW = 1920;
     const targetH = 1080;
 
-    const zoomFilename = `step_${stepNum}_zoom.png`;
+    const zoomFilename = `step_${stepNum}_${suffix}.png`;
     const zoomPath = path.join(tutorialDir, zoomFilename);
     await sharp(trimmed)
       .resize(targetW, targetH, {
